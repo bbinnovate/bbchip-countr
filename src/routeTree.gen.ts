@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as SessionRouteImport } from './routes/session'
 import { Route as SettleRouteImport } from './routes/settle'
@@ -17,6 +18,11 @@ import { Route as SettleRouteImport } from './routes/settle'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NewRoute = NewRouteImport.update({
@@ -37,12 +43,14 @@ const SettleRoute = SettleRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/history': typeof HistoryRoute
   '/new': typeof NewRoute
   '/session': typeof SessionRoute
   '/settle': typeof SettleRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/history': typeof HistoryRoute
   '/new': typeof NewRoute
   '/session': typeof SessionRoute
   '/settle': typeof SettleRoute
@@ -50,20 +58,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/history': typeof HistoryRoute
   '/new': typeof NewRoute
   '/session': typeof SessionRoute
   '/settle': typeof SettleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/new' | '/session' | '/settle'
+  fullPaths: '/' | '/history' | '/new' | '/session' | '/settle'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/new' | '/session' | '/settle'
-  id: '__root__' | '/' | '/new' | '/session' | '/settle'
+  to: '/' | '/history' | '/new' | '/session' | '/settle'
+  id: '__root__' | '/' | '/history' | '/new' | '/session' | '/settle'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HistoryRoute: typeof HistoryRoute
   NewRoute: typeof NewRoute
   SessionRoute: typeof SessionRoute
   SettleRoute: typeof SettleRoute
@@ -76,6 +86,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/new': {
@@ -104,6 +121,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HistoryRoute: HistoryRoute,
   NewRoute: NewRoute,
   SessionRoute: SessionRoute,
   SettleRoute: SettleRoute,
