@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as NewRouteImport } from './routes/new'
+import { Route as SessionRouteImport } from './routes/session'
+import { Route as SettleRouteImport } from './routes/settle'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +24,49 @@ const NewRoute = NewRouteImport.update({
   path: '/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SessionRoute = SessionRouteImport.update({
+  id: '/session',
+  path: '/session',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettleRoute = SettleRouteImport.update({
+  id: '/settle',
+  path: '/settle',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/new': typeof NewRoute
+  '/session': typeof SessionRoute
+  '/settle': typeof SettleRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/new': typeof NewRoute
+  '/session': typeof SessionRoute
+  '/settle': typeof SettleRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/new': typeof NewRoute
+  '/session': typeof SessionRoute
+  '/settle': typeof SettleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/new'
+  fullPaths: '/' | '/new' | '/session' | '/settle'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/new'
-  id: '__root__' | '/' | '/new'
+  to: '/' | '/new' | '/session' | '/settle'
+  id: '__root__' | '/' | '/new' | '/session' | '/settle'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   NewRoute: typeof NewRoute
+  SessionRoute: typeof SessionRoute
+  SettleRoute: typeof SettleRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +85,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/session': {
+      id: '/session'
+      path: '/session'
+      fullPath: '/session'
+      preLoaderRoute: typeof SessionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settle': {
+      id: '/settle'
+      path: '/settle'
+      fullPath: '/settle'
+      preLoaderRoute: typeof SettleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   NewRoute: NewRoute,
+  SessionRoute: SessionRoute,
+  SettleRoute: SettleRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
