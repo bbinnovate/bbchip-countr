@@ -95,13 +95,14 @@ export function settle(session: Session): Transfer[] {
   let i = 0;
   let j = 0;
   while (i < debtors.length && j < creditors.length) {
-    const amount = Math.min(debtors[i].amt, creditors[j].amt);
-    if (amount > 0)
-      transfers.push({ from: debtors[i].name, to: creditors[j].name, amount });
-    debtors[i].amt -= amount;
-    creditors[j].amt -= amount;
-    if (debtors[i].amt <= 0) i++;
-    if (creditors[j].amt <= 0) j++;
+    const d = debtors[i]!;
+    const c = creditors[j]!;
+    const amount = Math.min(d.amt, c.amt);
+    if (amount > 0) transfers.push({ from: d.name, to: c.name, amount });
+    d.amt -= amount;
+    c.amt -= amount;
+    if (d.amt <= 0) i++;
+    if (c.amt <= 0) j++;
   }
   return transfers;
 }
