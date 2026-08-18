@@ -35,6 +35,8 @@ function LiveSession() {
   const navigate = useNavigate();
   const [now, setNow] = useState(Date.now());
   const [confirm, setConfirm] = useState<Player | null>(null);
+  const [buyInCount, setBuyInCount] = useState(1);
+
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
