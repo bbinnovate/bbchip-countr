@@ -35,6 +35,8 @@ function LiveSession() {
   const navigate = useNavigate();
   const [now, setNow] = useState(Date.now());
   const [confirm, setConfirm] = useState<Player | null>(null);
+  const [buyInCount, setBuyInCount] = useState(1);
+
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -102,11 +104,15 @@ function LiveSession() {
               <Minus className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setConfirm(p)}
+              onClick={() => {
+                setBuyInCount(1);
+                setConfirm(p);
+              }}
               className="btn-gold flex items-center gap-1 px-4 py-2.5 text-xs"
             >
               <Plus className="h-4 w-4" /> Buy in
             </button>
+
           </div>
         ))}
       </div>
@@ -151,10 +157,34 @@ function LiveSession() {
               Currently {confirm.buyIns} banks (
               {formatMoney(confirm.buyIns * active.bankValue, active.currency)}) → will be{" "}
               <span className="text-primary">
-                {confirm.buyIns + 1} banks (
-                {formatMoney((confirm.buyIns + 1) * active.bankValue, active.currency)})
+                {confirm.buyIns + buyInCount} banks (
+                {formatMoney((confirm.buyIns + buyInCount) * active.bankValue, active.currency)})
               </span>
             </p>
+
+            <div className="mt-5 flex items-center justify-center gap-4">
+              <button
+                onClick={() => setBuyInCount((c) => Math.max(1, c - 1))}
+                className="btn-ghost p-3"
+                aria-label="Decrease buy-ins"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <div className="min-w-[4rem] text-center">
+                <p className="tabular text-3xl font-extrabold">{buyInCount}</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  banks
+                </p>
+              </div>
+              <button
+                onClick={() => setBuyInCount((c) => c + 1)}
+                className="btn-ghost p-3"
+                aria-label="Increase buy-ins"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+
             <div className="mt-5 flex gap-3">
               <button
                 onClick={() => setConfirm(null)}
@@ -164,14 +194,15 @@ function LiveSession() {
               </button>
               <button
                 onClick={() => {
-                  update(confirm.id, 1);
+                  update(confirm.id, buyInCount);
                   setConfirm(null);
                 }}
                 className="btn-gold flex-1 py-3 text-xs"
               >
-                Add buy-in
+                Add {buyInCount} bank{buyInCount > 1 ? "s" : ""}
               </button>
             </div>
+
           </div>
         </div>
       )}
