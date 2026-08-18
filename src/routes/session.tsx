@@ -104,11 +104,15 @@ function LiveSession() {
               <Minus className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setConfirm(p)}
+              onClick={() => {
+                setBuyInCount(1);
+                setConfirm(p);
+              }}
               className="btn-gold flex items-center gap-1 px-4 py-2.5 text-xs"
             >
               <Plus className="h-4 w-4" /> Buy in
             </button>
+
           </div>
         ))}
       </div>
