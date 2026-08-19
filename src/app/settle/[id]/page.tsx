@@ -1,52 +1,50 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+"use client";
+
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, Save } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
-import { usePokerStore } from "@/lib/use-poker-store";
+import { usePlayerCode } from "@/lib/use-player-code";
 import {
+  finishSession,
   formatMoney,
-  loadHistory,
   netOf,
-  saveActive,
-  saveHistory,
   settle,
+  subscribeSession,
   totalCashOut,
   totalPool,
   type Session,
 } from "@/lib/poker";
 
-export const Route = createFileRoute("/settle")({
-  head: () => ({
-    meta: [
-      { title: "Settlement — The Ledger" },
-      {
-        name: "description",
-        content: "Enter final stacks and get the minimum set of payments to settle up.",
-      },
-      { property: "og:title", content: "Settlement — The Ledger" },
-      {
-        property: "og:description",
-        content: "Splitwise-style poker payouts in the fewest transactions.",
-      },
-    ],
-  }),
-  component: SettleScreen,
-});
-
-function SettleScreen() {
-  const { active, ready } = usePokerStore();
-  const navigate = useNavigate();
+export default function SettleScreen() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const { code } = usePlayerCode();
+  const [session, setSession] = useState<Session | null>(null);
+  const [ready, setReady] = useState(false);
   const [stacks, setStacks] = useState<Record<string, string>>({});
+  const finishingRef = useRef(false);
 
   useEffect(() => {
-    if (ready && !active) navigate({ to: "/" });
-  }, [ready, active, navigate]);
+    return subscribeSession(
+      id,
+      (s) => {
+        setSession(s);
+        setReady(true);
+      },
+      (err) => console.error("Failed to load session:", err),
+    );
+  }, [id]);
 
-  if (!active) return <Shell>{null}</Shell>;
+  useEffect(() => {
+    if (ready && !session && !finishingRef.current) router.push("/");
+  }, [ready, session, router]);
+
+  if (!session) return <Shell>{null}</Shell>;
 
   const draft: Session = {
-    ...active,
-    players: active.players.map((p) => ({
+    ...session,
+    players: session.players.map((p) => ({
       ...p,
       cashOut: stacks[p.id] === undefined || stacks[p.id] === "" ? 0 : Number(stacks[p.id]),
     })),
@@ -57,15 +55,11 @@ function SettleScreen() {
   const diff = pool - out;
   const transfers = settle(draft);
 
-  const finish = () => {
-    const finished: Session = {
-      ...draft,
-      endedAt: Date.now(),
-      status: "settled",
-    };
-    saveHistory([finished, ...loadHistory()]);
-    saveActive(null);
-    navigate({ to: "/history" });
+  const finish = async () => {
+    if (!code) return;
+    finishingRef.current = true;
+    await finishSession(session.id, draft.players, code);
+    router.push("/history");
   };
 
   return (
@@ -74,14 +68,14 @@ function SettleScreen() {
         Cash <span className="gold-text">Out</span>
       </h1>
 
-      <SectionTitle>FINAL STACKS ({active.currency})</SectionTitle>
+      <SectionTitle>FINAL STACKS ({session.currency})</SectionTitle>
       <div className="space-y-2">
-        {active.players.map((p) => (
+        {session.players.map((p) => (
           <div key={p.id} className="surface flex items-center gap-3 p-3">
             <div className="flex-1">
               <p className="text-sm font-extrabold">{p.name}</p>
               <p className="tabular text-xs text-muted-foreground">
-                in {formatMoney(p.buyIns * active.bankValue, active.currency)}
+                in {formatMoney(p.buyIns * session.bankValue, session.currency)}
               </p>
             </div>
             <input
@@ -97,9 +91,7 @@ function SettleScreen() {
         ))}
       </div>
 
-      <div
-        className={`surface mt-5 flex items-center gap-3 p-4 ${diff === 0 ? "" : "metallic"}`}
-      >
+      <div className={`surface mt-5 flex items-center gap-3 p-4 ${diff === 0 ? "" : "metallic"}`}>
         {diff === 0 ? (
           <CheckCircle2 className="h-5 w-5 text-success" />
         ) : (
@@ -107,15 +99,15 @@ function SettleScreen() {
         )}
         <div className="tabular text-xs">
           <p className="font-bold">
-            Pool {formatMoney(pool, active.currency)} · Cashed out{" "}
-            {formatMoney(out, active.currency)}
+            Pool {formatMoney(pool, session.currency)} · Cashed out{" "}
+            {formatMoney(out, session.currency)}
           </p>
           <p className={diff === 0 ? "text-success" : "text-destructive"}>
             {diff === 0
               ? "Books balanced."
               : diff > 0
-                ? `Pool mismatch: +${formatMoney(diff, active.currency)} uncollected`
-                : `Pool mismatch: ${formatMoney(diff, active.currency)} over-counted`}
+                ? `Pool mismatch: +${formatMoney(diff, session.currency)} uncollected`
+                : `Pool mismatch: ${formatMoney(diff, session.currency)} over-counted`}
           </p>
         </div>
       </div>
@@ -140,7 +132,7 @@ function SettleScreen() {
                     }`}
                   >
                     {net > 0 ? "+" : ""}
-                    {formatMoney(net, active.currency)}
+                    {formatMoney(net, session.currency)}
                   </span>
                 </div>
               );
@@ -157,15 +149,12 @@ function SettleScreen() {
         ) : (
           <div className="space-y-2">
             {transfers.map((t, i) => (
-              <div
-                key={i}
-                className="surface flex items-center justify-between gap-2 p-4 text-sm"
-              >
+              <div key={i} className="surface flex items-center justify-between gap-2 p-4 text-sm">
                 <span className="font-bold text-destructive">{t.from}</span>
                 <ArrowRight className="h-4 w-4 text-primary" />
                 <span className="font-bold text-success">{t.to}</span>
                 <span className="tabular ml-auto font-extrabold">
-                  {formatMoney(t.amount, active.currency)}
+                  {formatMoney(t.amount, session.currency)}
                 </span>
               </div>
             ))}

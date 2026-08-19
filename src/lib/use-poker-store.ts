@@ -1,25 +1,35 @@
+"use client";
+
 import { useEffect, useState } from "react";
-import { loadActive, loadHistory, type Session } from "./poker";
+import { useAnonAuth } from "@/lib/use-anon-auth";
+import { usePlayerCode } from "@/lib/use-player-code";
+import { subscribeActiveSession, subscribeCodeHistory, type Session } from "@/lib/poker";
 
 export function usePokerStore() {
+  const { uid } = useAnonAuth();
+  const { code } = usePlayerCode();
   const [active, setActive] = useState<Session | null>(null);
   const [history, setHistory] = useState<Session[]>([]);
-  const [ready, setReady] = useState(false);
+  const [activeReady, setActiveReady] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
 
   useEffect(() => {
-    const sync = () => {
-      setActive(loadActive());
-      setHistory(loadHistory());
-      setReady(true);
-    };
-    sync();
-    window.addEventListener("poker-store", sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener("poker-store", sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
+    if (!uid) return;
+    const unsub = subscribeActiveSession(uid, (s) => {
+      setActive(s);
+      setActiveReady(true);
+    });
+    return unsub;
+  }, [uid]);
 
-  return { active, history, ready };
+  useEffect(() => {
+    if (!code) return;
+    const unsub = subscribeCodeHistory(code, (list) => {
+      setHistory(list);
+      setHistoryReady(true);
+    });
+    return unsub;
+  }, [code]);
+
+  return { active, history, ready: activeReady && historyReady };
 }

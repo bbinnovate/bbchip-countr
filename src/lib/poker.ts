@@ -1,3 +1,21 @@
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where,
+  type Unsubscribe,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
+
 export type Player = {
   id: string;
   name: string;
@@ -5,65 +23,165 @@ export type Player = {
   cashOut: number | null;
 };
 
-export type Session = {
-  id: string;
-  date: string; // ISO
+export type SessionDoc = {
+  hostUid: string;
   bankValue: number;
   currency: string;
   players: Player[];
-  startedAt: number;
-  endedAt: number | null;
+  startedAt: Timestamp | null;
+  endedAt: Timestamp | null;
   status: "active" | "settled";
+  date: Timestamp | null;
 };
 
-export type Transfer = { from: string; to: string; amount: number };
+export type Session = SessionDoc & { id: string };
 
-const ACTIVE_KEY = "poker_active_session";
-const HISTORY_KEY = "poker_history";
-const NAMES_KEY = "poker_known_names";
+const SESSIONS = "sessions";
+const HISTORIES = "playerHistories";
 
-const isBrowser = () => typeof window !== "undefined";
+export const genId = () => Math.random().toString(36).slice(2, 10);
 
-function read<T>(key: string, fallback: T): T {
-  if (!isBrowser()) return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+function toSession(id: string, data: SessionDoc): Session {
+  return { id, ...data };
 }
 
-function write(key: string, value: unknown) {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(key, JSON.stringify(value));
-  window.dispatchEvent(new Event("poker-store"));
+export async function createSession(
+  hostUid: string,
+  bankValue: number,
+  currency: string,
+  playerNames: string[],
+): Promise<string> {
+  const players: Player[] = playerNames.map((name) => ({
+    id: genId(),
+    name,
+    buyIns: 1,
+    cashOut: null,
+  }));
+  const ref = await addDoc(collection(db, SESSIONS), {
+    hostUid,
+    bankValue,
+    currency,
+    players,
+    startedAt: serverTimestamp(),
+    endedAt: null,
+    status: "active",
+    date: serverTimestamp(),
+  });
+  return ref.id;
 }
 
-export const loadActive = () => read<Session | null>(ACTIVE_KEY, null);
-export const saveActive = (s: Session | null) => {
-  if (!isBrowser()) return;
-  if (s === null) {
-    window.localStorage.removeItem(ACTIVE_KEY);
-    window.dispatchEvent(new Event("poker-store"));
-  } else write(ACTIVE_KEY, s);
-};
+export function subscribeSession(
+  id: string,
+  cb: (session: Session | null) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, SESSIONS, id),
+    (snap) => {
+      if (!snap.exists()) return cb(null);
+      cb(toSession(snap.id, snap.data({ serverTimestamps: "estimate" }) as SessionDoc));
+    },
+    (err) => onError?.(err),
+  );
+}
 
-export const loadHistory = () => read<Session[]>(HISTORY_KEY, []);
-export const saveHistory = (list: Session[]) => write(HISTORY_KEY, list);
+export function subscribeActiveSession(
+  hostUid: string,
+  cb: (session: Session | null) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  const q = query(
+    collection(db, SESSIONS),
+    where("hostUid", "==", hostUid),
+    where("status", "==", "active"),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      if (snap.empty) return cb(null);
+      const d = snap.docs[0]!;
+      cb(toSession(d.id, d.data({ serverTimestamps: "estimate" }) as SessionDoc));
+    },
+    (err) => onError?.(err),
+  );
+}
 
-export const loadNames = () => read<string[]>(NAMES_KEY, []);
-export const rememberNames = (names: string[]) => {
-  const set = new Set([...loadNames(), ...names.map((n) => n.trim()).filter(Boolean)]);
-  write(NAMES_KEY, Array.from(set).slice(0, 60));
-};
+/** Settled-history entries live under playerHistories/{code}/sessions — a
+ * path-scoped namespace keyed by the user's portable Player Code, decoupled
+ * from the device-bound Firebase auth uid. Knowing the code is what grants
+ * access (same capability model as a session link); it never includes
+ * active sessions, so a leaked code can't reach a live game. */
+export function subscribeCodeHistory(
+  code: string,
+  cb: (sessions: Session[]) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  const q = query(collection(db, HISTORIES, code, "sessions"), orderBy("date", "desc"));
+  return onSnapshot(
+    q,
+    (snap) => {
+      cb(
+        snap.docs.map((d) =>
+          toSession(d.id, d.data({ serverTimestamps: "estimate" }) as SessionDoc),
+        ),
+      );
+    },
+    (err) => onError?.(err),
+  );
+}
 
-export const uid = () => Math.random().toString(36).slice(2, 10);
+export async function updatePlayers(id: string, players: Player[]) {
+  await updateDoc(doc(db, SESSIONS, id), { players });
+}
+
+export async function finishSession(id: string, players: Player[], ownerCode: string) {
+  const settledAt = serverTimestamp();
+  await updateDoc(doc(db, SESSIONS, id), {
+    players,
+    status: "settled",
+    endedAt: settledAt,
+  });
+  const snap = await getDoc(doc(db, SESSIONS, id));
+  const data = snap.data() as SessionDoc;
+  await setDoc(doc(db, HISTORIES, ownerCode, "sessions", id), {
+    hostUid: data.hostUid,
+    bankValue: data.bankValue,
+    currency: data.currency,
+    players,
+    startedAt: data.startedAt,
+    endedAt: data.endedAt,
+    status: "settled",
+    date: data.date,
+  });
+}
+
+export async function discardSession(id: string) {
+  await deleteDoc(doc(db, SESSIONS, id));
+}
+
+export function subscribeCodeNames(
+  code: string,
+  cb: (names: string[]) => void,
+  onError?: (err: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, HISTORIES, code),
+    (snap) => cb((snap.data()?.names as string[] | undefined) ?? []),
+    (err) => onError?.(err),
+  );
+}
+
+export async function rememberCodeNames(code: string, names: string[]) {
+  const ref = doc(db, HISTORIES, code);
+  const snap = await getDoc(ref);
+  const existing = (snap.data()?.names as string[] | undefined) ?? [];
+  const set = new Set([...existing, ...names.map((n) => n.trim()).filter(Boolean)]);
+  await setDoc(ref, { names: Array.from(set).slice(0, 60) }, { merge: true });
+}
 
 export const totalBanks = (s: Session) => s.players.reduce((a, p) => a + p.buyIns, 0);
 export const totalPool = (s: Session) => totalBanks(s) * s.bankValue;
-export const totalCashOut = (s: Session) =>
-  s.players.reduce((a, p) => a + (p.cashOut ?? 0), 0);
+export const totalCashOut = (s: Session) => s.players.reduce((a, p) => a + (p.cashOut ?? 0), 0);
 export const netOf = (s: Session, p: Player) => (p.cashOut ?? 0) - p.buyIns * s.bankValue;
 
 export function formatMoney(amount: number, currency = "₹") {
@@ -78,6 +196,8 @@ export function formatDuration(ms: number) {
   const sec = total % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
+
+export type Transfer = { from: string; to: string; amount: number };
 
 /** Splitwise-style minimal transfer settlement. */
 export function settle(session: Session): Transfer[] {

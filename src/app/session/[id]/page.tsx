@@ -1,42 +1,40 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+"use client";
+
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Coins, Minus, Plus, Timer, Trash2, Users, X } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
-import { usePokerStore } from "@/lib/use-poker-store";
 import {
+  discardSession,
   formatDuration,
   formatMoney,
-  saveActive,
+  subscribeSession,
   totalBanks,
   totalPool,
+  updatePlayers,
   type Player,
+  type Session,
 } from "@/lib/poker";
 
-export const Route = createFileRoute("/session")({
-  head: () => ({
-    meta: [
-      { title: "Live Table — The Ledger" },
-      {
-        name: "description",
-        content: "One-tap rebuy tracking and a live cash pool for your poker table.",
-      },
-      { property: "og:title", content: "Live Table — The Ledger" },
-      {
-        property: "og:description",
-        content: "Track buy-ins, pool size, and session time in real time.",
-      },
-    ],
-  }),
-  component: LiveSession,
-});
-
-function LiveSession() {
-  const { active, ready } = usePokerStore();
-  const navigate = useNavigate();
+export default function LiveSession() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const [session, setSession] = useState<Session | null>(null);
+  const [ready, setReady] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [confirm, setConfirm] = useState<Player | null>(null);
   const [buyInCount, setBuyInCount] = useState(1);
 
+  useEffect(() => {
+    return subscribeSession(
+      id,
+      (s) => {
+        setSession(s);
+        setReady(true);
+      },
+      (err) => console.error("Failed to load session:", err),
+    );
+  }, [id]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -44,19 +42,23 @@ function LiveSession() {
   }, []);
 
   useEffect(() => {
-    if (ready && !active) navigate({ to: "/" });
-  }, [ready, active, navigate]);
+    if (!ready) return;
+    if (!session) router.push("/");
+    else if (session.status === "settled") router.push("/history");
+  }, [ready, session, router]);
 
-  if (!active) return <Shell>{null}</Shell>;
+  if (!session || session.status !== "active") return <Shell>{null}</Shell>;
 
-  const update = (id: string, delta: number) => {
-    saveActive({
-      ...active,
-      players: active.players.map((p) =>
-        p.id === id ? { ...p, buyIns: Math.max(0, p.buyIns + delta) } : p,
+  const update = (playerId: string, delta: number) => {
+    updatePlayers(
+      session.id,
+      session.players.map((p) =>
+        p.id === playerId ? { ...p, buyIns: Math.max(0, p.buyIns + delta) } : p,
       ),
-    });
+    );
   };
+
+  const startedAtMs = session.startedAt?.toMillis() ?? now;
 
   return (
     <Shell>
@@ -67,20 +69,20 @@ function LiveSession() {
               CASH ON TABLE
             </p>
             <p className="tabular gold-text mt-1 text-4xl font-extrabold">
-              {formatMoney(totalPool(active), active.currency)}
+              {formatMoney(totalPool(session), session.currency)}
             </p>
             <p className="tabular mt-1 text-xs text-muted-foreground">
-              {totalBanks(active)} banks × {active.currency}
-              {active.bankValue.toLocaleString("en-IN")}
+              {totalBanks(session)} banks × {session.currency}
+              {session.bankValue.toLocaleString("en-IN")}
             </p>
           </div>
           <div className="text-right">
             <p className="tabular flex items-center gap-1 text-sm font-bold">
               <Timer className="h-4 w-4 text-primary" />
-              {formatDuration(now - active.startedAt)}
+              {formatDuration(now - startedAtMs)}
             </p>
             <p className="tabular mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground">
-              <Users className="h-3 w-3" /> {active.players.length}
+              <Users className="h-3 w-3" /> {session.players.length}
             </p>
           </div>
         </div>
@@ -88,12 +90,12 @@ function LiveSession() {
 
       <SectionTitle>TABLE</SectionTitle>
       <div className="space-y-3">
-        {active.players.map((p) => (
+        {session.players.map((p) => (
           <div key={p.id} className="surface flex items-center gap-3 p-3">
             <div className="flex-1">
               <p className="text-sm font-extrabold">{p.name}</p>
               <p className="tabular text-xs text-muted-foreground">
-                {p.buyIns} banks · {formatMoney(p.buyIns * active.bankValue, active.currency)}
+                {p.buyIns} banks · {formatMoney(p.buyIns * session.bankValue, session.currency)}
               </p>
             </div>
             <button
@@ -112,14 +114,13 @@ function LiveSession() {
             >
               <Plus className="h-4 w-4" /> Buy in
             </button>
-
           </div>
         ))}
       </div>
 
       <div className="mt-8 space-y-3">
         <button
-          onClick={() => navigate({ to: "/settle" })}
+          onClick={() => router.push(`/settle/${session.id}`)}
           className="btn-gold w-full py-4 text-sm"
         >
           <span className="inline-flex items-center gap-2">
@@ -129,8 +130,8 @@ function LiveSession() {
         <button
           onClick={() => {
             if (window.confirm("Discard this session? Nothing will be saved.")) {
-              saveActive(null);
-              navigate({ to: "/" });
+              discardSession(session.id);
+              router.push("/");
             }
           }}
           className="btn-ghost flex w-full items-center justify-center gap-2 py-3 text-xs text-destructive"
@@ -155,10 +156,10 @@ function LiveSession() {
             </div>
             <p className="tabular mt-3 text-sm text-muted-foreground">
               Currently {confirm.buyIns} banks (
-              {formatMoney(confirm.buyIns * active.bankValue, active.currency)}) → will be{" "}
+              {formatMoney(confirm.buyIns * session.bankValue, session.currency)}) → will be{" "}
               <span className="text-primary">
                 {confirm.buyIns + buyInCount} banks (
-                {formatMoney((confirm.buyIns + buyInCount) * active.bankValue, active.currency)})
+                {formatMoney((confirm.buyIns + buyInCount) * session.bankValue, session.currency)})
               </span>
             </p>
 
@@ -172,9 +173,7 @@ function LiveSession() {
               </button>
               <div className="min-w-[4rem] text-center">
                 <p className="tabular text-3xl font-extrabold">{buyInCount}</p>
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  banks
-                </p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">banks</p>
               </div>
               <button
                 onClick={() => setBuyInCount((c) => c + 1)}
@@ -186,10 +185,7 @@ function LiveSession() {
             </div>
 
             <div className="mt-5 flex gap-3">
-              <button
-                onClick={() => setConfirm(null)}
-                className="btn-ghost flex-1 py-3 text-xs"
-              >
+              <button onClick={() => setConfirm(null)} className="btn-ghost flex-1 py-3 text-xs">
                 Cancel
               </button>
               <button
@@ -202,7 +198,6 @@ function LiveSession() {
                 Add {buyInCount} bank{buyInCount > 1 ? "s" : ""}
               </button>
             </div>
-
           </div>
         </div>
       )}

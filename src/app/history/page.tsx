@@ -1,38 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
+"use client";
+
 import { useMemo, useState } from "react";
 import { ArrowRight, ChevronLeft, ChevronRight, Clock, Users, X } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { usePokerStore } from "@/lib/use-poker-store";
-import {
-  formatDuration,
-  formatMoney,
-  netOf,
-  settle,
-  totalPool,
-  type Session,
-} from "@/lib/poker";
-
-export const Route = createFileRoute("/history")({
-  head: () => ({
-    meta: [
-      { title: "Session History — The Ledger" },
-      {
-        name: "description",
-        content: "Calendar of every poker night with pools, players and settlements.",
-      },
-      { property: "og:title", content: "Session History — The Ledger" },
-      {
-        property: "og:description",
-        content: "Browse past poker sessions by date and review final ledgers.",
-      },
-    ],
-  }),
-  component: HistoryPage,
-});
+import { formatDuration, formatMoney, netOf, settle, totalPool, type Session } from "@/lib/poker";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
-function HistoryPage() {
+export default function HistoryPage() {
   const { history } = usePokerStore();
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -43,7 +19,8 @@ function HistoryPage() {
   const byDay = useMemo(() => {
     const map = new Map<string, Session[]>();
     history.forEach((s) => {
-      const key = new Date(s.date).toDateString();
+      if (!s.date) return;
+      const key = s.date.toDate().toDateString();
       map.set(key, [...(map.get(key) ?? []), s]);
     });
     return map;
@@ -94,11 +71,7 @@ function HistoryPage() {
                 disabled={!has}
                 onClick={() => setSelected(sessions[0] ?? null)}
                 className={`tabular aspect-square rounded-lg text-xs font-bold ${
-                  has
-                    ? "btn-gold"
-                    : d
-                      ? "bg-secondary text-muted-foreground"
-                      : "opacity-0"
+                  has ? "btn-gold" : d ? "bg-secondary text-muted-foreground" : "opacity-0"
                 }`}
               >
                 {d?.getDate() ?? ""}
@@ -110,9 +83,7 @@ function HistoryPage() {
 
       <SectionTitle>ALL SESSIONS</SectionTitle>
       {history.length === 0 ? (
-        <div className="surface p-5 text-sm text-muted-foreground">
-          No games logged yet.
-        </div>
+        <div className="surface p-5 text-sm text-muted-foreground">No games logged yet.</div>
       ) : (
         <div className="space-y-3">
           {history.map((s) => (
@@ -123,11 +94,13 @@ function HistoryPage() {
             >
               <div>
                 <p className="text-sm font-bold">
-                  {new Date(s.date).toLocaleDateString("en-IN", {
-                    weekday: "short",
-                    day: "numeric",
-                    month: "short",
-                  })}
+                  {s.date
+                    ? s.date.toDate().toLocaleDateString("en-IN", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                      })
+                    : "—"}
                 </p>
                 <p className="tabular mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <Users className="h-3 w-3" /> {s.players.length} ·{" "}
@@ -156,11 +129,13 @@ function DaySheet({ session, onClose }: { session: Session; onClose: () => void 
               SESSION LEDGER
             </p>
             <h3 className="mt-1 text-2xl font-extrabold">
-              {new Date(session.date).toLocaleDateString("en-IN", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-              })}
+              {session.date
+                ? session.date.toDate().toLocaleDateString("en-IN", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  })
+                : "—"}
             </h3>
           </div>
           <button onClick={onClose} aria-label="Close">
@@ -176,7 +151,9 @@ function DaySheet({ session, onClose }: { session: Session; onClose: () => void 
           />
           <Stat
             label="DURATION"
-            value={formatDuration((session.endedAt ?? session.startedAt) - session.startedAt)}
+            value={formatDuration(
+              (session.endedAt?.toMillis() ?? 0) - (session.startedAt?.toMillis() ?? 0),
+            )}
           />
         </div>
 
@@ -191,9 +168,7 @@ function DaySheet({ session, onClose }: { session: Session; onClose: () => void 
               return (
                 <div key={p.id} className="flex items-center justify-between px-4 py-2.5">
                   <span className="text-sm font-bold">{p.name}</span>
-                  <span className="tabular text-xs text-muted-foreground">
-                    {p.buyIns} banks
-                  </span>
+                  <span className="tabular text-xs text-muted-foreground">{p.buyIns} banks</span>
                   <span
                     className={`tabular w-24 text-right text-sm font-extrabold ${
                       net > 0 ? "text-success" : net < 0 ? "text-destructive" : ""
@@ -229,7 +204,7 @@ function DaySheet({ session, onClose }: { session: Session; onClose: () => void 
 
         <p className="tabular mt-4 flex items-center gap-1 text-[11px] text-muted-foreground">
           <Clock className="h-3 w-3" />
-          Started {new Date(session.startedAt).toLocaleTimeString("en-IN")}
+          Started {session.startedAt?.toDate().toLocaleTimeString("en-IN") ?? "—"}
         </p>
 
         <button onClick={onClose} className="btn-ghost mt-5 w-full py-3 text-xs">

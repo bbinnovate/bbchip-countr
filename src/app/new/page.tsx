@@ -1,60 +1,48 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+"use client";
+
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
-import { loadNames, rememberNames, saveActive, uid, type Session } from "@/lib/poker";
-
-export const Route = createFileRoute("/new")({
-  head: () => ({
-    meta: [
-      { title: "New Session — The Ledger" },
-      {
-        name: "description",
-        content: "Set the bank value and roster for a new poker session.",
-      },
-      { property: "og:title", content: "New Session — The Ledger" },
-      {
-        property: "og:description",
-        content: "Define bank value and add up to 12 players.",
-      },
-    ],
-  }),
-  component: NewSession,
-});
+import { useAnonAuth } from "@/lib/use-anon-auth";
+import { usePlayerCode } from "@/lib/use-player-code";
+import { createSession, rememberCodeNames, subscribeCodeNames } from "@/lib/poker";
 
 const PRESETS = [100, 500, 1000, 5000, 10000];
 
-function NewSession() {
-  const navigate = useNavigate();
+export default function NewSession() {
+  const router = useRouter();
+  const { uid } = useAnonAuth();
+  const { code } = usePlayerCode();
   const [bankValue, setBankValue] = useState(500);
   const [currency, setCurrency] = useState("₹");
   const [names, setNames] = useState<string[]>(["", ""]);
   const [known, setKnown] = useState<string[]>([]);
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => setKnown(loadNames()), []);
+  useEffect(() => {
+    if (!code) return;
+    return subscribeCodeNames(code, setKnown);
+  }, [code]);
 
-  const setName = (i: number, v: string) =>
-    setNames((n) => n.map((x, idx) => (idx === i ? v : x)));
+  const setName = (i: number, v: string) => setNames((n) => n.map((x, idx) => (idx === i ? v : x)));
 
   const addName = (v = "") => setNames((n) => (n.length >= 12 ? n : [...n, v]));
 
-  const valid = names.filter((n) => n.trim()).length >= 2 && bankValue > 0;
+  const valid = names.filter((n) => n.trim()).length >= 2 && bankValue > 0 && !!uid;
 
-  const start = () => {
-    const clean = names.map((n) => n.trim()).filter(Boolean);
-    const session: Session = {
-      id: uid(),
-      date: new Date().toISOString(),
-      bankValue,
-      currency,
-      players: clean.map((name) => ({ id: uid(), name, buyIns: 1, cashOut: null })),
-      startedAt: Date.now(),
-      endedAt: null,
-      status: "active",
-    };
-    rememberNames(clean);
-    saveActive(session);
-    navigate({ to: "/session" });
+  const start = async () => {
+    if (!uid) return;
+    setCreating(true);
+    try {
+      const clean = names.map((n) => n.trim()).filter(Boolean);
+      const id = await createSession(uid, bankValue, currency, clean);
+      if (code) await rememberCodeNames(code, clean);
+      router.push(`/session/${id}`);
+    } catch (err) {
+      console.error("Failed to create session:", err);
+      setCreating(false);
+    }
   };
 
   return (
@@ -77,7 +65,7 @@ function NewSession() {
             inputMode="numeric"
             value={bankValue}
             onChange={(e) => setBankValue(Number(e.target.value))}
-            className="tabular flex-1 rounded-lg border border-border bg-secondary px-4 py-3 text-2xl font-extrabold text-primary"
+            className="tabular w-0 min-w-0 flex-1 rounded-lg border border-border bg-secondary px-4 py-3 text-2xl font-extrabold text-primary"
             aria-label="Value of one bank"
           />
         </div>
@@ -107,7 +95,7 @@ function NewSession() {
               value={n}
               onChange={(e) => setName(i, e.target.value)}
               placeholder={`Player ${i + 1}`}
-              className="flex-1 rounded-lg border border-border bg-card px-4 py-3 text-sm font-semibold"
+              className="flex-1 rounded-lg border border-border bg-card px-4 py-3 text-base font-semibold"
             />
             <button
               onClick={() => setNames((arr) => arr.filter((_, idx) => idx !== i))}
@@ -152,11 +140,11 @@ function NewSession() {
       )}
 
       <button
-        disabled={!valid}
+        disabled={!valid || creating}
         onClick={start}
         className="btn-gold mt-8 w-full py-4 text-sm disabled:opacity-40"
       >
-        Deal me in
+        {creating ? "Dealing..." : "Deal me in"}
       </button>
       <p className="mt-2 text-center text-xs text-muted-foreground">
         Everyone starts with 1 buy-in.
