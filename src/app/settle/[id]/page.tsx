@@ -8,6 +8,7 @@ import { usePlayerCode } from "@/lib/use-player-code";
 import {
   finishSession,
   formatMoney,
+  hasHistoryEntry,
   netOf,
   settle,
   subscribeSession,
@@ -23,6 +24,8 @@ export default function SettleScreen() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [stacks, setStacks] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const finishingRef = useRef(false);
 
   useEffect(() => {
@@ -37,8 +40,17 @@ export default function SettleScreen() {
   }, [id]);
 
   useEffect(() => {
-    if (ready && !session && !finishingRef.current) router.push("/");
-  }, [ready, session, router]);
+    if (!ready || finishingRef.current) return;
+    if (!session) {
+      router.push("/");
+      return;
+    }
+    if (session.status === "settled" && code) {
+      hasHistoryEntry(code, session.id).then((exists) => {
+        if (exists) router.push("/");
+      });
+    }
+  }, [ready, session, code, router]);
 
   if (!session) return <Shell>{null}</Shell>;
 
@@ -56,10 +68,19 @@ export default function SettleScreen() {
   const transfers = settle(draft);
 
   const finish = async () => {
-    if (!code) return;
-    finishingRef.current = true;
-    await finishSession(session.id, draft.players, code);
-    router.push("/history");
+    if (!code || saving) return;
+    setError(null);
+    setSaving(true);
+    try {
+      await finishSession(session.id, draft.players, code);
+      finishingRef.current = true;
+      router.push("/");
+    } catch (err) {
+      console.error("Failed to save session to history:", err);
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(`Couldn't save this session: ${detail}`);
+      setSaving(false);
+    }
   };
 
   return (
@@ -84,7 +105,7 @@ export default function SettleScreen() {
               value={stacks[p.id] ?? ""}
               onChange={(e) => setStacks((s) => ({ ...s, [p.id]: e.target.value }))}
               placeholder="0"
-              className="tabular w-32 rounded-lg border border-border bg-secondary px-3 py-2.5 text-right text-lg font-bold"
+              className="tabular w-32 [appearance:textfield] rounded-lg border border-border bg-secondary px-3 py-2.5 text-right text-lg font-bold [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               aria-label={`Final stack for ${p.name}`}
             />
           </div>
@@ -162,9 +183,15 @@ export default function SettleScreen() {
         )}
       </div>
 
-      <button onClick={finish} className="btn-gold mt-8 mb-4 w-full py-4 text-sm">
+      {error && <p className="mt-4 text-center text-xs font-bold text-destructive">{error}</p>}
+
+      <button
+        onClick={finish}
+        disabled={saving}
+        className="btn-gold mt-4 mb-4 w-full py-4 text-sm disabled:opacity-60"
+      >
         <span className="inline-flex items-center gap-2">
-          <Save className="h-4 w-4" /> Save to history
+          <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save to history"}
         </span>
       </button>
     </Shell>

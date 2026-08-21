@@ -135,24 +135,38 @@ export async function updatePlayers(id: string, players: Player[]) {
 }
 
 export async function finishSession(id: string, players: Player[], ownerCode: string) {
-  const settledAt = serverTimestamp();
-  await updateDoc(doc(db, SESSIONS, id), {
-    players,
-    status: "settled",
-    endedAt: settledAt,
-  });
-  const snap = await getDoc(doc(db, SESSIONS, id));
-  const data = snap.data() as SessionDoc;
-  await setDoc(doc(db, HISTORIES, ownerCode, "sessions", id), {
-    hostUid: data.hostUid,
-    bankValue: data.bankValue,
-    currency: data.currency,
-    players,
-    startedAt: data.startedAt,
-    endedAt: data.endedAt,
-    status: "settled",
-    date: data.date,
-  });
+  const ref = doc(db, SESSIONS, id);
+  const before = (await getDoc(ref)).data() as SessionDoc;
+
+  if (before.status !== "settled") {
+    try {
+      await updateDoc(ref, { players, status: "settled", endedAt: serverTimestamp() });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`settling table failed (${detail})`);
+    }
+  }
+
+  const data = before.status === "settled" ? before : ((await getDoc(ref)).data() as SessionDoc);
+  try {
+    await setDoc(doc(db, HISTORIES, ownerCode, "sessions", id), {
+      hostUid: data.hostUid,
+      bankValue: data.bankValue,
+      currency: data.currency,
+      players: data.players,
+      startedAt: data.startedAt,
+      endedAt: data.endedAt,
+      status: "settled",
+      date: data.date,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`saving history entry failed (${detail})`);
+  }
+}
+
+export function hasHistoryEntry(code: string, sessionId: string) {
+  return getDoc(doc(db, HISTORIES, code, "sessions", sessionId)).then((snap) => snap.exists());
 }
 
 export async function discardSession(id: string) {

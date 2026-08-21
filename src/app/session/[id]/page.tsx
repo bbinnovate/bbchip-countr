@@ -99,13 +99,6 @@ export default function LiveSession() {
               </p>
             </div>
             <button
-              onClick={() => update(p.id, -1)}
-              className="btn-ghost p-2.5"
-              aria-label={`Remove buy-in from ${p.name}`}
-            >
-              <Minus className="h-4 w-4" />
-            </button>
-            <button
               onClick={() => {
                 setBuyInCount(1);
                 setConfirm(p);

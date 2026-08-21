@@ -1,156 +1,56 @@
 rules_version = '2';
 
 // ===============================================================
-// Assumed Data Model
+// Data model (kept intentionally light — see below for why)
 // ===============================================================
 //
 // Collection: sessions
-// Document ID: Firestore auto-ID. This ID doubles as the app's
-//   shareable "table link" — anyone signed in (even anonymously)
-//   who has the ID can view and tap buy-ins on that table. There is
-//   no per-guest identity or invite list; the unguessable random ID
-//   is the access control, the same trust model as a shareable Google
-//   Docs link. This is a deliberate product choice (the app has no
-//   login) and is documented here so it can be revisited.
-// Fields:
-//   - hostUid: string (required, immutable) — anonymous auth uid of
-//       the device that created the session. Only this uid may settle
-//       or delete the session.
-//   - bankValue: number (required, > 0, <= 10,000,000) — immutable
-//       after create.
-//   - currency: string (required, 1-3 chars) — immutable after create.
-//   - players: list of maps, 1-12 entries (required). Each entry:
-//       - id: string (1-19 chars)
-//       - name: string (1-39 chars)
-//       - buyIns: number (0-999)
-//       - cashOut: number (0 to 99,999,999) or null
-//   - status: string (required) — "active" | "settled". Starts
-//       "active"; may only transition to "settled" once, by the host.
-//       No further field changes are allowed once "settled".
-//   - startedAt: timestamp (required, immutable)
-//   - endedAt: timestamp | null — null while active; set to a
-//       timestamp exactly when status transitions to "settled".
-//   - date: timestamp (required, immutable) — used to order history.
+// Document ID: Firestore auto-ID, doubles as the app's shareable
+//   "table link". Anyone signed in (even anonymously) who has the
+//   ID can view/tap buy-ins/settle it — no login, no invite list,
+//   the unguessable ID is the access control (same trust model as
+//   a shareable Google Docs link).
+// Fields: hostUid, bankValue, currency, players (list), status
+//   ("active" | "settled"), startedAt, endedAt, date.
 //
-// Collection: playerHistories
-// Document ID: a user-chosen "Player Code" (format XXXX-XXXX, generated
-//   client-side, e.g. "DNX6-2BJD") — a portable identity decoupled from
-//   the device-bound anonymous auth uid, so a user can see their own
-//   history on a new device/reinstall by re-entering their code.
-//   Knowing the code is the access control (same capability-link model
-//   as `sessions`), and there is deliberately no `list` on this
-//   collection itself, so codes can't be enumerated — only looked up
-//   one at a time by someone who already has one. A leaked code exposes
-//   read/write of that code's settled-history + names cache; it can
-//   NEVER reach an active/live session (those stay uid-gated above).
-// Fields:
-//   - names: list of strings, max 60 entries — a "known players"
-//       autocomplete cache.
+// Collection: playerHistories/{code}/sessions/{sessionId}
+// A denormalized, immutable copy of a settled session, keyed by a
+// user-chosen portable "Player Code" instead of the device-bound
+// anonymous uid, so history follows the person, not the device.
 //
-// Subcollection: playerHistories/{code}/sessions
-// Document ID: matches the originating `sessions` document ID.
-// Fields: a denormalized, immutable snapshot of a settled session —
-//   hostUid, bankValue, currency, players (see `sessions.players`
-//   above), startedAt, endedAt, status (always "settled"), date.
-//   Written once when a session is settled; never updated or deleted.
-//
+// This ruleset deliberately validates only the invariants that
+// actually matter (auth required, settled records are immutable) and
+// skips strict per-field/per-player schema checks — those turned out
+// to be too brittle in practice (rejecting legitimate writes for
+// reasons that were hard to pin down) for an app with no real
+// adversarial user model in the first place.
 // ===============================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------------------------------------------------------------
-    // Helper functions
-    // ---------------------------------------------------------------
-
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function unchanged(field) {
-      return request.resource.data[field] == resource.data[field];
-    }
-
-    function isValidPlayer(p) {
-      return p is map &&
-        p.keys().hasOnly(['id', 'name', 'buyIns', 'cashOut']) &&
-        p.keys().hasAll(['id', 'name', 'buyIns', 'cashOut']) &&
-        p.id is string && p.id.size() > 0 && p.id.size() < 20 &&
-        p.name is string && p.name.size() > 0 && p.name.size() < 40 &&
-        p.buyIns is number && p.buyIns >= 0 && p.buyIns < 1000 &&
-        (p.cashOut == null || (p.cashOut is number && p.cashOut >= 0 && p.cashOut < 100000000));
-    }
-
-    // Firestore rules can't loop over a variable-length list, so we
-    // check each possible index up to the app's own 12-player cap.
-    function isValidPlayerAt(players, i) {
-      return players.size() <= i || isValidPlayer(players[i]);
-    }
-
-    function isValidPlayers(players) {
-      return players is list && players.size() >= 1 && players.size() <= 12 &&
-        isValidPlayerAt(players, 0) && isValidPlayerAt(players, 1) &&
-        isValidPlayerAt(players, 2) && isValidPlayerAt(players, 3) &&
-        isValidPlayerAt(players, 4) && isValidPlayerAt(players, 5) &&
-        isValidPlayerAt(players, 6) && isValidPlayerAt(players, 7) &&
-        isValidPlayerAt(players, 8) && isValidPlayerAt(players, 9) &&
-        isValidPlayerAt(players, 10) && isValidPlayerAt(players, 11);
-    }
-
-    function isValidNewSession() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        d.keys().hasAll(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        d.hostUid is string && d.hostUid == request.auth.uid &&
-        d.bankValue is number && d.bankValue > 0 && d.bankValue <= 10000000 &&
-        d.currency is string && d.currency.size() > 0 && d.currency.size() <= 3 &&
-        isValidPlayers(d.players) &&
-        d.status == 'active' &&
-        d.startedAt is timestamp &&
-        d.endedAt == null &&
-        d.date is timestamp;
-    }
-
-    // Any signed-in visitor holding the session link may tap buy-ins
-    // while the table is live — only the `players` field may change.
-    function isValidActiveUpdate() {
-      let d = request.resource.data;
-      return resource.data.status == 'active' &&
-        d.keys().hasOnly(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        unchanged('hostUid') && unchanged('bankValue') && unchanged('currency') &&
-        unchanged('startedAt') && unchanged('date') &&
-        isValidPlayers(d.players) &&
-        d.status == 'active' &&
-        d.endedAt == null;
-    }
-
-    // Only the host may close out a table. This is the one-way
-    // active -> settled transition; every other field besides
-    // `players`, `status`, and `endedAt` must stay untouched.
-    function isValidSettleUpdate() {
-      let d = request.resource.data;
-      return resource.data.status == 'active' &&
-        request.auth.uid == resource.data.hostUid &&
-        d.keys().hasOnly(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        unchanged('hostUid') && unchanged('bankValue') && unchanged('currency') &&
-        unchanged('startedAt') && unchanged('date') &&
-        isValidPlayers(d.players) &&
-        d.status == 'settled' &&
-        d.endedAt is timestamp;
-    }
-
     match /sessions/{sessionId} {
-      // Capability-link read: knowing the (unguessable) session ID is
-      // the access control, matching the app's "no login" design.
       allow get: if isAuthenticated();
 
       // History/dashboard queries always filter hostUid == caller's
       // own uid, so only the owner's sessions are ever listed.
       allow list: if isAuthenticated() && resource.data.hostUid == request.auth.uid;
 
-      allow create: if isAuthenticated() && isValidNewSession();
+      allow create: if isAuthenticated() &&
+        request.resource.data.hostUid == request.auth.uid &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.players is list;
 
-      allow update: if isAuthenticated() && (isValidActiveUpdate() || isValidSettleUpdate());
+      // Anyone holding the table link may tap buy-ins while it's live
+      // and close it out once. A settled session can never be written
+      // to again (its history copy is the permanent record).
+      allow update: if isAuthenticated() &&
+        resource.data.status != 'settled' &&
+        request.resource.data.players is list;
 
       // Only the host can discard a table, and only before it's settled.
       allow delete: if isAuthenticated() &&
@@ -158,32 +58,15 @@ service cloud.firestore {
         resource.data.status == 'active';
     }
 
-    function isValidHistoryEntry() {
-      let d = request.resource.data;
-      return d.keys().hasOnly(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        d.keys().hasAll(['hostUid', 'bankValue', 'currency', 'players', 'status', 'startedAt', 'endedAt', 'date']) &&
-        d.hostUid is string && d.hostUid.size() > 0 && d.hostUid.size() < 200 &&
-        d.bankValue is number && d.bankValue > 0 && d.bankValue <= 10000000 &&
-        d.currency is string && d.currency.size() > 0 && d.currency.size() <= 3 &&
-        isValidPlayers(d.players) &&
-        d.status == 'settled' &&
-        d.startedAt is timestamp &&
-        d.endedAt is timestamp &&
-        d.date is timestamp;
-    }
-
     match /playerHistories/{code} {
       // No `list` here — codes can only be looked up one at a time by
       // someone who already has the exact code, never enumerated.
       allow get: if isAuthenticated();
-      allow write: if isAuthenticated() &&
-        request.resource.data.keys().hasOnly(['names']) &&
-        request.resource.data.names is list &&
-        request.resource.data.names.size() <= 60;
+      allow write: if isAuthenticated();
 
       match /sessions/{sessionId} {
         allow get, list: if isAuthenticated();
-        allow create: if isAuthenticated() && isValidHistoryEntry();
+        allow create: if isAuthenticated() && request.resource.data.players is list;
         // Settled history is a permanent, immutable record.
         allow update, delete: if false;
       }

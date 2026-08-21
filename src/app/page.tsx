@@ -1,14 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { ChevronRight, History, PlayCircle, Trophy, Users } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
+import { SessionLedgerModal } from "@/components/SessionLedgerModal";
 import { usePokerStore } from "@/lib/use-poker-store";
-import { formatMoney, totalPool, netOf } from "@/lib/poker";
+import { formatMoney, totalPool, netOf, type Session } from "@/lib/poker";
 
 export default function Dashboard() {
   const { active, history } = usePokerStore();
   const recent = history.slice(0, 3);
+  const [selected, setSelected] = useState<Session | null>(null);
 
   return (
     <Shell>
@@ -77,10 +80,10 @@ export default function Dashboard() {
           {recent.map((s) => {
             const top = [...s.players].sort((a, b) => netOf(s, b) - netOf(s, a))[0];
             return (
-              <Link
+              <button
                 key={s.id}
-                href="/history"
-                className="surface flex items-center justify-between p-4"
+                onClick={() => setSelected(s)}
+                className="surface flex w-full items-center justify-between p-4 text-left"
               >
                 <div>
                   <p className="text-sm font-bold">
@@ -104,11 +107,13 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </Link>
+              </button>
             );
           })}
         </div>
       )}
+
+      {selected && <SessionLedgerModal session={selected} onClose={() => setSelected(null)} />}
     </Shell>
   );
 }
