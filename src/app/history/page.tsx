@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { SessionLedgerModal } from "@/components/SessionLedgerModal";
+import { AdSlot } from "@/components/AdSlot";
 import { usePokerStore } from "@/lib/use-poker-store";
 import { formatMoney, totalPool, type Session } from "@/lib/poker";
 
@@ -81,6 +82,8 @@ export default function HistoryPage() {
           })}
         </div>
       </div>
+
+      <AdSlot placement="history" type="banner" />
 
       <SectionTitle>ALL SESSIONS</SectionTitle>
       {history.length === 0 ? (
