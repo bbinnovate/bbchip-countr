@@ -32,6 +32,7 @@ export const ALLOWED_TARGET_PAGES = ["/", "/settle/[id]", "/history"] as const;
 export type AllowedTargetPage = (typeof ALLOWED_TARGET_PAGES)[number];
 
 export type MediaType = "image" | "video";
+export type StaticAdType = "banner" | "product_card";
 
 export interface PublicAd {
   id: string;
@@ -43,6 +44,8 @@ export interface PublicAd {
   mediaHeight?: number;
   aspectRatio?: string;
   clickUrl?: string | null;
+  isStatic?: boolean;
+  staticType?: StaticAdType | null;
 }
 
 export interface Ad {
@@ -57,6 +60,8 @@ export interface Ad {
   aspectRatio?: string;
   targetPages: string[];
   isActive: boolean;
+  isStatic?: boolean;
+  staticType?: StaticAdType | null;
   startDate?: string | null;
   endDate?: string | null;
   clickUrl?: string | null;
@@ -176,6 +181,11 @@ export const adminDb = {
       return {
         id: d.id,
         ...(data as Omit<Ad, "id">),
+        isStatic: typeof data.isStatic === "boolean" ? data.isStatic : false,
+        staticType:
+          data.staticType === "banner" || data.staticType === "product_card"
+            ? data.staticType
+            : null,
         views: typeof data.views === "number" ? data.views : 0,
         clicks: typeof data.clicks === "number" ? data.clicks : 0,
       };
@@ -223,6 +233,9 @@ export const adminDb = {
     return {
       id: snap.id,
       ...(data as Omit<Ad, "id">),
+      isStatic: typeof data.isStatic === "boolean" ? data.isStatic : false,
+      staticType:
+        data.staticType === "banner" || data.staticType === "product_card" ? data.staticType : null,
       views: typeof data.views === "number" ? data.views : 0,
       clicks: typeof data.clicks === "number" ? data.clicks : 0,
     };
@@ -235,6 +248,8 @@ export const adminDb = {
     const newAd: Ad = {
       views: 0,
       clicks: 0,
+      isStatic: false,
+      staticType: null,
       ...adData,
       id,
       createdAt: now,
@@ -354,6 +369,10 @@ export const adminDb = {
     seed?: string,
     maxCount: number = 3,
     excludeIds: string[] = [],
+    filters?: {
+      isStatic?: boolean;
+      staticType?: StaticAdType;
+    },
   ): Promise<{ ad: PublicAd | null; ads: PublicAd[] }> {
     const { ads } = await this.listAds({ limit: 1000 });
     const now = Date.now();
@@ -362,6 +381,17 @@ export const adminDb = {
       if (!ad.isActive) return false;
       if (!ad.targetPages.includes(targetPage)) return false;
       if (excludeIds.includes(ad.id)) return false;
+
+      // Filter by isStatic if specified
+      if (typeof filters?.isStatic === "boolean") {
+        const adIsStatic = Boolean(ad.isStatic);
+        if (adIsStatic !== filters.isStatic) return false;
+      }
+
+      // Filter by staticType if specified
+      if (filters?.staticType) {
+        if (ad.staticType !== filters.staticType) return false;
+      }
 
       if (ad.startDate) {
         const start = new Date(ad.startDate).getTime();
@@ -410,6 +440,8 @@ export const adminDb = {
           mediaHeight: ad.mediaHeight,
           aspectRatio: ad.aspectRatio,
           clickUrl: ad.clickUrl || null,
+          isStatic: ad.isStatic ?? false,
+          staticType: ad.staticType || null,
         });
       }
     }

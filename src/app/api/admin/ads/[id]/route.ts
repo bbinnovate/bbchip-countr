@@ -24,6 +24,8 @@ const adUpdateSchema = z.object({
     )
     .optional(),
   isActive: z.boolean().optional(),
+  isStatic: z.boolean().optional(),
+  staticType: z.enum(["banner", "product_card"]).nullable().optional(),
   startDate: z.string().datetime().nullable().optional(),
   endDate: z.string().datetime().nullable().optional(),
   clickUrl: z.string().url().nullable().optional().or(z.literal("")),

@@ -303,6 +303,11 @@ export default function AdminAdsListPage() {
                             {ad.aspectRatio}
                           </span>
                         )}
+                        {ad.isStatic && (
+                          <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
+                            Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
+                          </span>
+                        )}
                       </div>
 
                       {ad.description && (

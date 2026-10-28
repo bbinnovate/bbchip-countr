@@ -35,11 +35,35 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const isStaticParam = searchParams.get("isStatic");
+    const staticTypeParam = searchParams.get("staticType");
+    const formatParam = searchParams.get("format");
+    const countParam = parseInt(searchParams.get("count") || "3", 10);
+    const maxCount = Math.max(1, Math.min(isNaN(countParam) ? 3 : countParam, 10));
+
+    let isStaticFilter: boolean | undefined = undefined;
+    if (formatParam === "drawer" || isStaticParam === "false") {
+      isStaticFilter = false;
+    } else if (formatParam === "static" || isStaticParam === "true") {
+      isStaticFilter = true;
+    }
+
+    let staticTypeFilter: "banner" | "product_card" | undefined = undefined;
+    if (staticTypeParam === "banner") {
+      staticTypeFilter = "banner";
+    } else if (staticTypeParam === "product_card" || staticTypeParam === "product") {
+      staticTypeFilter = "product_card";
+    }
+
     const { ad, ads } = await adminDb.getServedAdsForPage(
       page as AllowedTargetPage,
       seed,
-      3,
+      maxCount,
       excludeIds,
+      {
+        isStatic: isStaticFilter,
+        staticType: staticTypeFilter,
+      },
     );
 
     return NextResponse.json(

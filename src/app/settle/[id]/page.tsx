@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, Save } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
-// import { AdSlot } from "@/components/AdSlot";
+import { AdSlot } from "@/components/AdSlot";
 import { AdDrawer } from "@/components/AdDrawer";
 import { usePlayerCode } from "@/lib/use-player-code";
 import {
@@ -185,7 +185,7 @@ export default function SettleScreen() {
         )}
       </div>
 
-      {/* <AdSlot placement="settle" type="product" className="mt-6 mb-0" /> */}
+      <AdSlot placement="settle" className="mt-6 mb-0" />
 
       {error && <p className="mt-4 text-center text-xs font-bold text-destructive">{error}</p>}
 

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
+import { cn } from "@/lib/utils";
 import {
   deleteUploadedMedia,
   detectMediaDimensions,
@@ -40,6 +41,8 @@ export default function CreateAdPage() {
   const [description, setDescription] = useState("");
   const [targetPages, setTargetPages] = useState<string[]>(["/"]);
   const [isActive, setIsActive] = useState(true);
+  const [isStatic, setIsStatic] = useState(false);
+  const [staticType, setStaticType] = useState<"banner" | "product_card">("banner");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [clickUrl, setClickUrl] = useState("");
@@ -180,6 +183,8 @@ export default function CreateAdPage() {
         aspectRatio: uploadedResult.aspectRatio,
         targetPages,
         isActive,
+        isStatic,
+        staticType: isStatic ? staticType : null,
         startDate: startDate ? new Date(startDate).toISOString() : null,
         endDate: endDate ? new Date(endDate).toISOString() : null,
         clickUrl: clickUrl.trim() || null,
@@ -309,6 +314,17 @@ export default function CreateAdPage() {
                 Media will be previewed locally and uploaded only when you submit the form.
               </p>
 
+              {isStatic && (
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary">
+                  <span>📐 Target Space Fit:</span>
+                  <span>
+                    {staticType === "banner"
+                      ? "3:1 Banner (e.g. 1200×400px) · Image will be cropped to fit"
+                      : "1:1 Square (e.g. 600×600px) · Image will be cropped to fit"}
+                  </span>
+                </div>
+              )}
+
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
@@ -324,7 +340,7 @@ export default function CreateAdPage() {
           {mediaFile && previewUrl && (
             <div className="rounded-xl border border-border bg-secondary/50 p-4">
               <div className="flex items-start justify-between gap-4">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                   <div className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-black">
                     {mediaType === "image" ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -344,7 +360,7 @@ export default function CreateAdPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
                         {mediaType}
                       </span>
@@ -353,7 +369,7 @@ export default function CreateAdPage() {
                       </span>
                       {aspectRatio && (
                         <span className="tabular text-xs font-bold text-muted-foreground">
-                          Ratio: {aspectRatio}
+                          Original Ratio: {aspectRatio}
                         </span>
                       )}
                     </div>
@@ -382,6 +398,54 @@ export default function CreateAdPage() {
                   </button>
                 )}
               </div>
+
+              {/* Live Crop Preview for Static Ads */}
+              {isStatic && (
+                <div className="mt-4 border-t border-border/60 pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-foreground">
+                      {staticType === "banner"
+                        ? "📐 3:1 Banner Crop Preview"
+                        : "📐 1:1 Product Card Crop Preview"}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      Auto-cropped with object-cover
+                    </span>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "relative overflow-hidden rounded-lg border border-primary/30 bg-black",
+                      staticType === "banner"
+                        ? "w-full max-w-md aspect-[3/1]"
+                        : "w-32 aspect-square",
+                    )}
+                  >
+                    {mediaType === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={previewUrl}
+                        alt="Crop Preview"
+                        className="h-full w-full object-cover object-center"
+                      />
+                    ) : (
+                      <video
+                        src={previewUrl}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="h-full w-full object-cover object-center"
+                      />
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    {staticType === "banner"
+                      ? "Recommended upload size: 1200×400px (3:1 ratio). Other sizes are automatically centered and cropped to fit."
+                      : "Recommended upload size: 600×600px (1:1 ratio). Other sizes are automatically centered and cropped to fit."}
+                  </p>
+                </div>
+              )}
 
               {/* Uploading progress bar during submit */}
               {submitting && uploadProgress !== null && (
@@ -509,6 +573,118 @@ export default function CreateAdPage() {
               />
             </div>
           </div>
+        </div>
+
+        {/* Static Ad Radio Option */}
+        <div className="border-t border-border pt-6">
+          <label className="mb-1 block text-xs font-bold tracking-wider text-muted-foreground uppercase">
+            Static Ad?
+          </label>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Specify whether this creative is a static advertisement.
+          </p>
+
+          <div className="grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
+            <label
+              className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
+                isStatic
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
+              }`}
+            >
+              <input
+                type="radio"
+                name="isStatic"
+                checked={isStatic === true}
+                onChange={() => setIsStatic(true)}
+                className="h-4 w-4 accent-primary"
+              />
+              <div>
+                <p className="text-xs font-bold text-foreground">True</p>
+                <p className="text-[10px] text-muted-foreground">Static creative</p>
+              </div>
+            </label>
+
+            <label
+              className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
+                !isStatic
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
+              }`}
+            >
+              <input
+                type="radio"
+                name="isStatic"
+                checked={isStatic === false}
+                onChange={() => setIsStatic(false)}
+                className="h-4 w-4 accent-primary"
+              />
+              <div>
+                <p className="text-xs font-bold text-foreground">False</p>
+                <p className="text-[10px] text-muted-foreground">Regular / rotating ad</p>
+              </div>
+            </label>
+          </div>
+
+          {/* Conditional Static Ad Type Options (shown only if isStatic is true) */}
+          {isStatic && (
+            <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="mb-1 block text-xs font-bold tracking-wider text-muted-foreground uppercase">
+                Static Ad Type <span className="text-primary">*</span>
+              </label>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Select whether this static ad is formatted as a Banner or Product Cards.
+              </p>
+
+              <div className="grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
+                <label
+                  className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
+                    staticType === "banner"
+                      ? "border-primary bg-primary/20 text-foreground shadow-sm"
+                      : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="staticType"
+                    value="banner"
+                    checked={staticType === "banner"}
+                    onChange={() => setStaticType("banner")}
+                    className="h-4 w-4 accent-primary"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Banner</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      3:1 Ratio (e.g. 1200×400px) · Cropped
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
+                    staticType === "product_card"
+                      ? "border-primary bg-primary/20 text-foreground shadow-sm"
+                      : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="staticType"
+                    value="product_card"
+                    checked={staticType === "product_card"}
+                    onChange={() => setStaticType("product_card")}
+                    className="h-4 w-4 accent-primary"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Product Cards</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      1:1 Square (e.g. 600×600px) · Cropped
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Active Toggle Switch */}

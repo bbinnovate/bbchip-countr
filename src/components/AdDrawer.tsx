@@ -58,7 +58,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
         const seed = Math.random().toString(36).substring(2, 10);
 
         const res = await fetch(
-          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&seed=${encodeURIComponent(seed)}${excludeParam}`,
+          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&format=drawer&isStatic=false&seed=${encodeURIComponent(seed)}${excludeParam}`,
           { cache: "no-store" },
         );
 
@@ -69,9 +69,12 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
         const allFetched: PublicAd[] =
           Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
 
-        // Safety filter in case server didn't exclude or client has updated session storage
+        // Safety filter in case server didn't exclude or client has updated session storage;
+        // Strictly filter out any static ads so only non-static drawer ads appear
         const currentDismissed = new Set(getDismissedAdIds());
-        const eligibleAds = allFetched.filter((ad) => !currentDismissed.has(ad.id)).slice(0, 3);
+        const eligibleAds = allFetched
+          .filter((ad) => !ad.isStatic && !currentDismissed.has(ad.id))
+          .slice(0, 3);
 
         if (isMounted && eligibleAds.length > 0) {
           setAdsList(eligibleAds);
@@ -240,8 +243,8 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
       currentAd.aspectRatio === "1:1"
         ? "aspect-square"
         : currentAd.aspectRatio === "3:1"
-          ? "aspect-3/1"
-          : "aspect-16/9";
+          ? "aspect-[3/1]"
+          : "aspect-video";
 
     return (
       <div

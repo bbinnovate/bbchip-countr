@@ -322,6 +322,11 @@ export default function AdminDashboardPage() {
                         <span className="rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground uppercase">
                           {ad.mediaType}
                         </span>
+                        {ad.isStatic && (
+                          <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
+                            Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
+                          </span>
+                        )}
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
@@ -484,6 +489,11 @@ export default function AdminDashboardPage() {
                       <span className="rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground uppercase">
                         {ad.mediaType}
                       </span>
+                      {ad.isStatic && (
+                        <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
+                          Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
