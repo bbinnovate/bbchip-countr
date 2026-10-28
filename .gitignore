@@ -16,6 +16,9 @@ out/
 build
 next-env.d.ts
 
+.env
+scratch/
+
 *.local
 
 # Editor directories and files

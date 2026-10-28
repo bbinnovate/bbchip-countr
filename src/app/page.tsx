@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ChevronRight, History, PlayCircle, Trophy, Users } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { SessionLedgerModal } from "@/components/SessionLedgerModal";
-import { AdSlot } from "@/components/AdSlot";
+// import { AdSlot } from "@/components/AdSlot";
+import { AdDrawer } from "@/components/AdDrawer";
 import { usePokerStore } from "@/lib/use-poker-store";
 import { formatMoney, totalPool, netOf, type Session } from "@/lib/poker";
 
@@ -53,7 +54,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <AdSlot placement="home" type="banner" />
+      {/* <AdSlot placement="home" type="banner" /> */}
 
       <div className="mb-6 grid grid-cols-2 gap-3">
         <Link href="/history" className="surface flex flex-col gap-2 p-4">
@@ -117,6 +118,7 @@ export default function Dashboard() {
       )}
 
       {selected && <SessionLedgerModal session={selected} onClose={() => setSelected(null)} />}
+      <AdDrawer targetPage="/" />
     </Shell>
   );
 }

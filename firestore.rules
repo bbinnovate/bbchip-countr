@@ -72,6 +72,15 @@ service cloud.firestore {
       }
     }
 
+    match /admin/{userId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /ads/{adId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
     // Default deny for everything else.
     match /{document=**} {
       allow read, write: if false;

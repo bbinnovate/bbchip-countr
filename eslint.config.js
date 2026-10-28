@@ -8,8 +8,9 @@ import tseslint from "typescript-eslint";
 const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
 
 export default tseslint.config(
-  { ignores: [".next", "out", "node_modules"] },
+  { ignores: [".next", "out", "node_modules", "next-env.d.ts"] },
   ...compat.extends("next/core-web-vitals"),
+  eslintPluginPrettier,
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
@@ -23,7 +24,7 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "@typescript-eslint/no-unused-vars": "off",
+      "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },
-  eslintPluginPrettier,
 );

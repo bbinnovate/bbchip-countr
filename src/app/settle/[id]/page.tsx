@@ -4,7 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, Save } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
-import { AdSlot } from "@/components/AdSlot";
+// import { AdSlot } from "@/components/AdSlot";
+import { AdDrawer } from "@/components/AdDrawer";
 import { usePlayerCode } from "@/lib/use-player-code";
 import {
   finishSession,
@@ -184,7 +185,7 @@ export default function SettleScreen() {
         )}
       </div>
 
-      <AdSlot placement="settle" type="product" className="mt-6 mb-0" />
+      {/* <AdSlot placement="settle" type="product" className="mt-6 mb-0" /> */}
 
       {error && <p className="mt-4 text-center text-xs font-bold text-destructive">{error}</p>}
 
@@ -197,6 +198,8 @@ export default function SettleScreen() {
           <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save to history"}
         </span>
       </button>
+
+      <AdDrawer targetPage="/settle/[id]" />
     </Shell>
   );
 }

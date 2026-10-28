@@ -1,0 +1,367 @@
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import { signInAnonymously } from "firebase/auth";
+import { auth, db } from "@/lib/firebase";
+
+export type AdminRole = "admin" | "superadmin";
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  passwordHash: string;
+  name: string;
+  role: AdminRole;
+  tokenVersion: number;
+  createdAt: string; // ISO 8601 string
+  updatedAt: string; // ISO 8601 string
+  lastLoginAt?: string | null;
+}
+
+export const ALLOWED_TARGET_PAGES = ["/", "/settle/[id]", "/history"] as const;
+export type AllowedTargetPage = (typeof ALLOWED_TARGET_PAGES)[number];
+
+export type MediaType = "image" | "video";
+
+export interface PublicAd {
+  id: string;
+  title: string;
+  description?: string;
+  mediaType: MediaType;
+  mediaUrl: string;
+  mediaWidth?: number;
+  mediaHeight?: number;
+  aspectRatio?: string;
+  clickUrl?: string | null;
+}
+
+export interface Ad {
+  id: string;
+  title: string;
+  description?: string;
+  mediaType: MediaType;
+  mediaUrl: string;
+  storagePath: string;
+  mediaWidth?: number;
+  mediaHeight?: number;
+  aspectRatio?: string;
+  targetPages: string[];
+  isActive: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+  clickUrl?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+const ADMIN_COLLECTION = "admin";
+const ADS_COLLECTION = "ads";
+
+// Ensure auth session is ready for Firestore rules
+async function ensureAuth() {
+  if (!auth.currentUser) {
+    try {
+      await signInAnonymously(auth);
+    } catch (e) {
+      // Ignore if already signed in or not required
+    }
+  }
+}
+
+function stripUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val !== undefined) {
+      clean[key] = val;
+    }
+  }
+  return clean;
+}
+
+// -------------------------------------------------------------------------
+// Firestore Data Access via @/lib/firebase (No .json, No ADC needed)
+// -------------------------------------------------------------------------
+export const adminDb = {
+  // Admin Users (Collection: 'admin')
+  async getAdminUserByEmail(email: string): Promise<AdminUser | null> {
+    await ensureAuth();
+    const normalized = email.toLowerCase().trim();
+    const q = query(collection(db, ADMIN_COLLECTION), where("email", "==", normalized), limit(1));
+    const snap = await getDocs(q);
+
+    if (snap.empty || !snap.docs[0]) {
+      return null;
+    }
+
+    const docSnap = snap.docs[0];
+    return { id: docSnap.id, ...(docSnap.data() as Omit<AdminUser, "id">) };
+  },
+
+  async getAdminUserById(id: string): Promise<AdminUser | null> {
+    await ensureAuth();
+    const ref = doc(db, ADMIN_COLLECTION, id);
+    const snap = await getDoc(ref);
+
+    if (!snap.exists()) {
+      return null;
+    }
+
+    return { id: snap.id, ...(snap.data() as Omit<AdminUser, "id">) };
+  },
+
+  async createAdminUser(
+    user: Omit<AdminUser, "id" | "tokenVersion" | "createdAt" | "updatedAt">,
+  ): Promise<AdminUser> {
+    await ensureAuth();
+    const id = `admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const now = new Date().toISOString();
+    const fullUser: AdminUser = {
+      ...user,
+      id,
+      email: user.email.toLowerCase().trim(),
+      tokenVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const ref = doc(db, ADMIN_COLLECTION, id);
+    const { id: _, ...dataToSave } = fullUser;
+    await setDoc(ref, stripUndefined(dataToSave));
+
+    return fullUser;
+  },
+
+  async updateAdminUser(id: string, updates: Partial<AdminUser>): Promise<AdminUser | null> {
+    await ensureAuth();
+    const now = new Date().toISOString();
+    const ref = doc(db, ADMIN_COLLECTION, id);
+    await updateDoc(ref, stripUndefined({ ...updates, updatedAt: now }));
+
+    return this.getAdminUserById(id);
+  },
+
+  async revokeAdminSessions(id: string): Promise<boolean> {
+    const user = await this.getAdminUserById(id);
+    if (!user) return false;
+    await this.updateAdminUser(id, { tokenVersion: user.tokenVersion + 1 });
+    return true;
+  },
+
+  // Ads (Collection: 'ads')
+  async listAds(filters?: {
+    search?: string;
+    isActive?: boolean;
+    mediaType?: MediaType;
+    targetPage?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ ads: Ad[]; total: number }> {
+    await ensureAuth();
+    const snap = await getDocs(collection(db, ADS_COLLECTION));
+    const allAds: Ad[] = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<Ad, "id">),
+    }));
+
+    allAds.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+
+    let filtered = allAds;
+
+    if (filters?.search) {
+      const q = filters.search.toLowerCase();
+      filtered = filtered.filter(
+        (ad) =>
+          ad.title.toLowerCase().includes(q) ||
+          (ad.description && ad.description.toLowerCase().includes(q)),
+      );
+    }
+
+    if (typeof filters?.isActive === "boolean") {
+      filtered = filtered.filter((ad) => ad.isActive === filters.isActive);
+    }
+
+    if (filters?.mediaType) {
+      filtered = filtered.filter((ad) => ad.mediaType === filters.mediaType);
+    }
+
+    if (filters?.targetPage) {
+      filtered = filtered.filter((ad) => ad.targetPages.includes(filters.targetPage!));
+    }
+
+    const total = filtered.length;
+    const offset = filters?.offset || 0;
+    const limitCount = filters?.limit || 50;
+    const paged = filtered.slice(offset, offset + limitCount);
+
+    return { ads: paged, total };
+  },
+
+  async getAdById(id: string): Promise<Ad | null> {
+    await ensureAuth();
+    const ref = doc(db, ADS_COLLECTION, id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...(snap.data() as Omit<Ad, "id">) };
+  },
+
+  async createAd(adData: Omit<Ad, "id" | "createdAt" | "updatedAt">): Promise<Ad> {
+    await ensureAuth();
+    const id = `ad_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const now = new Date().toISOString();
+    const newAd: Ad = {
+      ...adData,
+      id,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const ref = doc(db, ADS_COLLECTION, id);
+    const { id: _, ...dataToSave } = newAd;
+    await setDoc(ref, stripUndefined(dataToSave));
+
+    return newAd;
+  },
+
+  async updateAd(id: string, updates: Partial<Ad>): Promise<Ad | null> {
+    await ensureAuth();
+    const now = new Date().toISOString();
+    const ref = doc(db, ADS_COLLECTION, id);
+    await updateDoc(ref, stripUndefined({ ...updates, updatedAt: now }));
+    return this.getAdById(id);
+  },
+
+  async deleteAd(id: string): Promise<Ad | null> {
+    await ensureAuth();
+    const ad = await this.getAdById(id);
+    if (!ad) return null;
+    const ref = doc(db, ADS_COLLECTION, id);
+    await deleteDoc(ref);
+    return ad;
+  },
+
+  async isStoragePathUsed(storagePath: string, excludeAdId?: string): Promise<boolean> {
+    const { ads } = await this.listAds({ limit: 1000 });
+    return ads.some((ad) => ad.storagePath === storagePath && ad.id !== excludeAdId);
+  },
+
+  async getStats() {
+    const { ads } = await this.listAds({ limit: 1000 });
+    const total = ads.length;
+    const active = ads.filter((a) => a.isActive).length;
+    const inactive = total - active;
+    const images = ads.filter((a) => a.mediaType === "image").length;
+    const videos = ads.filter((a) => a.mediaType === "video").length;
+
+    const byPage: Record<string, number> = {
+      "/": 0,
+      "/settle/[id]": 0,
+      "/history": 0,
+    };
+
+    for (const ad of ads) {
+      for (const page of ad.targetPages) {
+        if (byPage[page] !== undefined) {
+          byPage[page]++;
+        } else {
+          byPage[page] = 1;
+        }
+      }
+    }
+
+    const recent = [...ads].sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1)).slice(0, 5);
+
+    return {
+      total,
+      active,
+      inactive,
+      images,
+      videos,
+      byPage,
+      recent,
+    };
+  },
+
+  async getServedAdsForPage(
+    targetPage: string,
+    seed?: string,
+    maxCount: number = 3,
+  ): Promise<{ ad: PublicAd | null; ads: PublicAd[] }> {
+    const { ads } = await this.listAds({ limit: 1000 });
+    const now = Date.now();
+
+    const eligible = ads.filter((ad) => {
+      if (!ad.isActive) return false;
+      if (!ad.targetPages.includes(targetPage)) return false;
+
+      if (ad.startDate) {
+        const start = new Date(ad.startDate).getTime();
+        if (!isNaN(start) && now < start) return false;
+      }
+
+      if (ad.endDate) {
+        const end = new Date(ad.endDate).getTime();
+        if (!isNaN(end) && now > end) return false;
+      }
+
+      return true;
+    });
+
+    if (eligible.length === 0) {
+      return { ad: null, ads: [] };
+    }
+
+    // Deterministic selection/rotation strategy:
+    let startIndex = 0;
+    if (seed) {
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) {
+        hash = (hash << 5) - hash + seed.charCodeAt(i);
+        hash |= 0;
+      }
+      startIndex = Math.abs(hash) % eligible.length;
+    } else {
+      const hourBucket = Math.floor(now / (1000 * 60 * 60 * 6));
+      startIndex = hourBucket % eligible.length;
+    }
+
+    const selectedAds: PublicAd[] = [];
+    const countToTake = Math.min(eligible.length, maxCount);
+
+    for (let i = 0; i < countToTake; i++) {
+      const ad = eligible[(startIndex + i) % eligible.length];
+      if (ad && !selectedAds.some((s) => s.id === ad.id)) {
+        selectedAds.push({
+          id: ad.id,
+          title: ad.title,
+          description: ad.description || undefined,
+          mediaType: ad.mediaType,
+          mediaUrl: ad.mediaUrl,
+          mediaWidth: ad.mediaWidth,
+          mediaHeight: ad.mediaHeight,
+          aspectRatio: ad.aspectRatio,
+          clickUrl: ad.clickUrl || null,
+        });
+      }
+    }
+
+    return {
+      ad: selectedAds[0] || null,
+      ads: selectedAds,
+    };
+  },
+
+  async getServedAdForPage(targetPage: string, seed?: string): Promise<PublicAd | null> {
+    const { ad } = await this.getServedAdsForPage(targetPage, seed, 1);
+    return ad;
+  },
+};

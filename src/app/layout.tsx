@@ -1,16 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo } from "next/font/google";
 import { RegisterServiceWorker } from "@/components/RegisterServiceWorker";
 import { FirebaseAnalytics } from "@/components/FirebaseAnalytics";
 import { AnonAuthBoot } from "@/components/AnonAuthBoot";
 import "./globals.css";
 
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["400", "600", "700", "800", "900"],
-  variable: "--font-archivo",
-  display: "swap",
-});
+const archivo = {
+  variable: "font-sans",
+};
 
 export const metadata: Metadata = {
   title: "The Ledger — Poker Bank Tracker",
