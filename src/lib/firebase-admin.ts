@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   limit,
   query,
   setDoc,
@@ -59,6 +60,8 @@ export interface Ad {
   startDate?: string | null;
   endDate?: string | null;
   clickUrl?: string | null;
+  views?: number;
+  clicks?: number;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
@@ -168,10 +171,15 @@ export const adminDb = {
   }): Promise<{ ads: Ad[]; total: number }> {
     await ensureAuth();
     const snap = await getDocs(collection(db, ADS_COLLECTION));
-    const allAds: Ad[] = snap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<Ad, "id">),
-    }));
+    const allAds: Ad[] = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        ...(data as Omit<Ad, "id">),
+        views: typeof data.views === "number" ? data.views : 0,
+        clicks: typeof data.clicks === "number" ? data.clicks : 0,
+      };
+    });
 
     allAds.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
 
@@ -211,7 +219,13 @@ export const adminDb = {
     const ref = doc(db, ADS_COLLECTION, id);
     const snap = await getDoc(ref);
     if (!snap.exists()) return null;
-    return { id: snap.id, ...(snap.data() as Omit<Ad, "id">) };
+    const data = snap.data();
+    return {
+      id: snap.id,
+      ...(data as Omit<Ad, "id">),
+      views: typeof data.views === "number" ? data.views : 0,
+      clicks: typeof data.clicks === "number" ? data.clicks : 0,
+    };
   },
 
   async createAd(adData: Omit<Ad, "id" | "createdAt" | "updatedAt">): Promise<Ad> {
@@ -219,6 +233,8 @@ export const adminDb = {
     const id = `ad_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
     const newAd: Ad = {
+      views: 0,
+      clicks: 0,
       ...adData,
       id,
       createdAt: now,
@@ -238,6 +254,34 @@ export const adminDb = {
     const ref = doc(db, ADS_COLLECTION, id);
     await updateDoc(ref, stripUndefined({ ...updates, updatedAt: now }));
     return this.getAdById(id);
+  },
+
+  async recordAdView(id: string): Promise<boolean> {
+    await ensureAuth();
+    try {
+      const ref = doc(db, ADS_COLLECTION, id);
+      await updateDoc(ref, {
+        views: increment(1),
+      });
+      return true;
+    } catch (err) {
+      console.error("[Record Ad View Error]:", err);
+      return false;
+    }
+  },
+
+  async recordAdClick(id: string): Promise<boolean> {
+    await ensureAuth();
+    try {
+      const ref = doc(db, ADS_COLLECTION, id);
+      await updateDoc(ref, {
+        clicks: increment(1),
+      });
+      return true;
+    } catch (err) {
+      console.error("[Record Ad Click Error]:", err);
+      return false;
+    }
   },
 
   async deleteAd(id: string): Promise<Ad | null> {
@@ -262,6 +306,10 @@ export const adminDb = {
     const images = ads.filter((a) => a.mediaType === "image").length;
     const videos = ads.filter((a) => a.mediaType === "video").length;
 
+    const totalViews = ads.reduce((acc, a) => acc + (a.views || 0), 0);
+    const totalClicks = ads.reduce((acc, a) => acc + (a.clicks || 0), 0);
+    const ctr = totalViews > 0 ? Number(((totalClicks / totalViews) * 100).toFixed(2)) : 0;
+
     const byPage: Record<string, number> = {
       "/": 0,
       "/settle/[id]": 0,
@@ -279,6 +327,12 @@ export const adminDb = {
     }
 
     const recent = [...ads].sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1)).slice(0, 5);
+    const topPerforming = [...ads]
+      .sort(
+        (a, b) =>
+          (b.clicks || 0) * 1000 + (b.views || 0) - ((a.clicks || 0) * 1000 + (a.views || 0)),
+      )
+      .slice(0, 5);
 
     return {
       total,
@@ -286,8 +340,12 @@ export const adminDb = {
       inactive,
       images,
       videos,
+      totalViews,
+      totalClicks,
+      ctr,
       byPage,
       recent,
+      topPerforming,
     };
   },
 
@@ -295,6 +353,7 @@ export const adminDb = {
     targetPage: string,
     seed?: string,
     maxCount: number = 3,
+    excludeIds: string[] = [],
   ): Promise<{ ad: PublicAd | null; ads: PublicAd[] }> {
     const { ads } = await this.listAds({ limit: 1000 });
     const now = Date.now();
@@ -302,6 +361,7 @@ export const adminDb = {
     const eligible = ads.filter((ad) => {
       if (!ad.isActive) return false;
       if (!ad.targetPages.includes(targetPage)) return false;
+      if (excludeIds.includes(ad.id)) return false;
 
       if (ad.startDate) {
         const start = new Date(ad.startDate).getTime();

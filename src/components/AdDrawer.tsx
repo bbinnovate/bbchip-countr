@@ -9,6 +9,33 @@ interface AdDrawerProps {
   className?: string;
 }
 
+const DISMISSED_ADS_KEY = "ad_drawer_dismissed_ads";
+
+function getDismissedAdIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(DISMISSED_ADS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function markAdDismissedThisSession(adId: string): void {
+  if (typeof window === "undefined" || !adId) return;
+  try {
+    const current = getDismissedAdIds();
+    if (!current.includes(adId)) {
+      current.push(adId);
+      window.sessionStorage.setItem(DISMISSED_ADS_KEY, JSON.stringify(current));
+    }
+  } catch {
+    // Ignore storage quota or security errors
+  }
+}
+
 export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
   const [adsList, setAdsList] = useState<PublicAd[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -25,27 +52,29 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
 
     async function fetchAds(): Promise<void> {
       try {
-        // Unique seed per page load ensures fresh deterministic rotation on each refresh
+        const dismissed = getDismissedAdIds();
+        const excludeParam =
+          dismissed.length > 0 ? `&exclude=${encodeURIComponent(dismissed.join(","))}` : "";
         const seed = Math.random().toString(36).substring(2, 10);
 
         const res = await fetch(
-          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&seed=${encodeURIComponent(seed)}`,
+          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&seed=${encodeURIComponent(seed)}${excludeParam}`,
           { cache: "no-store" },
         );
 
         if (!res.ok) return;
 
         const data = await res.json();
-        // Support both data.ads array and data.ad single object, capped at max 3 ads
-        const fetchedAds: PublicAd[] =
-          Array.isArray(data.ads) && data.ads.length > 0
-            ? data.ads.slice(0, 3)
-            : data.ad
-              ? [data.ad]
-              : [];
+        // Support both data.ads array and data.ad single object
+        const allFetched: PublicAd[] =
+          Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
 
-        if (isMounted && fetchedAds.length > 0) {
-          setAdsList(fetchedAds);
+        // Safety filter in case server didn't exclude or client has updated session storage
+        const currentDismissed = new Set(getDismissedAdIds());
+        const eligibleAds = allFetched.filter((ad) => !currentDismissed.has(ad.id)).slice(0, 3);
+
+        if (isMounted && eligibleAds.length > 0) {
+          setAdsList(eligibleAds);
           setCurrentIndex(0);
           setIsRendered(true);
           // Short delay so slide-up animation kicks in smoothly
@@ -68,10 +97,15 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
     };
   }, [targetPage]);
 
-  // Handle drawer close: if more ads exist in queue (up to max 3), show next ad after close
+  // Handle drawer close: dismiss the closed ad for the session & show next active ad in sequence
   const handleClose = () => {
     if (videoRef.current) {
       videoRef.current.pause();
+    }
+
+    const closedAd = adsList[currentIndex];
+    if (closedAd) {
+      markAdDismissedThisSession(closedAd.id);
     }
 
     setIsVisible(false);
@@ -79,11 +113,21 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
 
-    const nextIdx = currentIndex + 1;
+    const dismissed = new Set(getDismissedAdIds());
+    let nextIdx = currentIndex + 1;
     const maxAdsToShow = Math.min(adsList.length, 3);
 
+    while (nextIdx < maxAdsToShow) {
+      const candidateAd = adsList[nextIdx];
+      if (candidateAd && dismissed.has(candidateAd.id)) {
+        nextIdx++;
+      } else {
+        break;
+      }
+    }
+
     if (nextIdx < maxAdsToShow) {
-      // Wait for slide-down animation to finish (350ms), then load next ad and slide up
+      // Wait for slide-down animation to finish (350ms), then load next active ad and slide up
       closeTimerRef.current = setTimeout(() => {
         setCurrentIndex(nextIdx);
         setIsMuted(false);
@@ -93,7 +137,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
         }, 100);
       }, 350);
     } else {
-      // Reached end of ads for this visit
+      // Reached end of active ads for this session
       closeTimerRef.current = setTimeout(() => {
         setIsRendered(false);
         setAdsList([]);
@@ -110,6 +154,44 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
   };
 
   const currentAd = adsList[currentIndex] || null;
+  const trackedViewsRef = useRef<Set<string>>(new Set());
+
+  // Record impression / view when an ad becomes visible to the user
+  useEffect(() => {
+    if (isVisible && currentAd && !trackedViewsRef.current.has(currentAd.id)) {
+      trackedViewsRef.current.add(currentAd.id);
+      try {
+        void fetch("/api/ads/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ adId: currentAd.id, event: "view" }),
+          keepalive: true,
+        });
+      } catch {
+        // Ignore tracking errors
+      }
+    }
+  }, [isVisible, currentAd]);
+
+  // Record click event when user interacts with Click-Through URL
+  const handleAdClick = (adId: string) => {
+    try {
+      const payload = JSON.stringify({ adId, event: "click" });
+      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+        const blob = new Blob([payload], { type: "application/json" });
+        navigator.sendBeacon("/api/ads/track", blob);
+      } else {
+        void fetch("/api/ads/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        });
+      }
+    } catch {
+      // Ignore tracking errors
+    }
+  };
 
   useEffect(() => {
     if (videoRef.current && currentAd?.mediaType === "video") {
@@ -127,13 +209,11 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
         });
       }
     }
-  }, [currentIndex, currentAd]);
+  }, [currentIndex, currentAd, isMuted]);
 
   if (!isRendered || !currentAd) {
     return null;
   }
-
-  const maxAdsToShow = Math.min(adsList.length, 3);
 
   function renderMediaContent() {
     if (!currentAd) return null;
@@ -190,16 +270,16 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
         {/* Subtle top gold accent bar */}
         <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-primary to-transparent opacity-80" />
 
-        {/* Header: Sponsored badge, optional sequence counter & Close button */}
+        {/* Header: Sponsored badge & Close button */}
         <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/50 bg-secondary/30">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[0.2em] text-primary uppercase">
               <Sparkles className="h-3 w-3 text-primary animate-pulse" />
               <span>Sponsored</span>
             </div>
-            {maxAdsToShow > 1 && (
+            {adsList.length > 1 && (
               <span className="text-[10px] font-semibold text-muted-foreground/80 tracking-normal">
-                ({currentIndex + 1} of {maxAdsToShow})
+                ({currentIndex + 1} of {Math.min(adsList.length, 3)})
               </span>
             )}
           </div>
@@ -207,7 +287,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
           <button
             onClick={handleClose}
             aria-label="Close advertisement"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -220,6 +300,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
               href={currentAd.clickUrl}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => handleAdClick(currentAd.id)}
               className="block group cursor-pointer"
             >
               {renderMediaContent()}
@@ -256,6 +337,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
               href={currentAd.clickUrl}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => handleAdClick(currentAd.id)}
               className="btn-gold shrink-0 px-3 py-1.5 text-[11px] flex items-center gap-1.5"
             >
               <span>Learn More</span>

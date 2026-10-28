@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
 import {
   deleteUploadedMedia,
+  detectMediaDimensions,
   startMediaUpload,
   validateMediaFile,
   type MediaUploadResult,
@@ -43,15 +44,29 @@ export default function CreateAdPage() {
   const [endDate, setEndDate] = useState("");
   const [clickUrl, setClickUrl] = useState("");
 
-  // Media Upload State
+  // Media Selection State (local preview before submit)
   const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<"image" | "video">("image");
+  const [mediaWidth, setMediaWidth] = useState<number | undefined>();
+  const [mediaHeight, setMediaHeight] = useState<number | undefined>();
+  const [aspectRatio, setAspectRatio] = useState<string | undefined>();
+  const [fileSizeBytes, setFileSizeBytes] = useState<number>(0);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [uploadedMedia, setUploadedMedia] = useState<MediaUploadResult | null>(null);
   const [uploadTask, setUploadTask] = useState<UploadTask | null>(null);
 
   // Submission State
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Cleanup object URL on unmount or when preview changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,32 +78,25 @@ export default function CreateAdPage() {
       return;
     }
 
-    setMediaFile(file);
-    setError(null);
-    setUploadProgress(0);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
 
-    const { task, promise } = startMediaUpload(file, (pct) => {
-      setUploadProgress(pct);
-    });
-    setUploadTask(task);
+    const localUrl = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith("video/");
+    setMediaFile(file);
+    setPreviewUrl(localUrl);
+    setMediaType(isVideo ? "video" : "image");
+    setFileSizeBytes(file.size);
+    setError(null);
 
     try {
-      const result = await promise;
-      setUploadedMedia(result);
-      toast.success("Media uploaded to Firebase Storage successfully");
-    } catch (err: unknown) {
-      const isCanceled =
-        typeof err === "object" && err !== null && "code" in err && err.code === "storage/canceled";
-      if (isCanceled) {
-        toast.info("Upload canceled");
-      } else {
-        toast.error("Failed to upload media to Firebase Storage");
-      }
-      setMediaFile(null);
-      setUploadedMedia(null);
-    } finally {
-      setUploadProgress(null);
-      setUploadTask(null);
+      const dimensions = await detectMediaDimensions(file);
+      setMediaWidth(dimensions.width);
+      setMediaHeight(dimensions.height);
+      setAspectRatio(dimensions.aspectRatio);
+    } catch (err) {
+      console.warn("Failed to detect media dimensions:", err);
     }
   };
 
@@ -97,15 +105,19 @@ export default function CreateAdPage() {
       uploadTask.cancel();
     }
     setUploadProgress(null);
-    setMediaFile(null);
+    setSubmitting(false);
   };
 
-  const handleRemoveMedia = async () => {
-    if (uploadedMedia?.storagePath) {
-      await deleteUploadedMedia(uploadedMedia.storagePath);
+  const handleRemoveMedia = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
     }
-    setUploadedMedia(null);
     setMediaFile(null);
+    setPreviewUrl(null);
+    setMediaWidth(undefined);
+    setMediaHeight(undefined);
+    setAspectRatio(undefined);
+    setFileSizeBytes(0);
   };
 
   const toggleTargetPage = (pageId: string) => {
@@ -124,8 +136,8 @@ export default function CreateAdPage() {
       return;
     }
 
-    if (!uploadedMedia) {
-      setError("Please upload an image or video creative");
+    if (!mediaFile) {
+      setError("Please select an image or video creative");
       return;
     }
 
@@ -140,20 +152,32 @@ export default function CreateAdPage() {
     }
 
     setSubmitting(true);
+    setUploadProgress(0);
+
+    let uploadedResult: MediaUploadResult | null = null;
 
     try {
+      // 1. Upload to Firebase Storage upon submit
+      const { task, promise } = startMediaUpload(mediaFile, (pct) => {
+        setUploadProgress(pct);
+      });
+      setUploadTask(task);
+
+      uploadedResult = await promise;
+
+      // 2. Save Ad Document to Firestore
       const match = document.cookie.match(/(?:^|; )ledger_csrf_token=([^;]*)/);
       const csrfToken = match && match[1] ? decodeURIComponent(match[1]) : "";
 
       const payload = {
         title: title.trim(),
         description: description.trim() || undefined,
-        mediaType: uploadedMedia.mediaType,
-        mediaUrl: uploadedMedia.downloadUrl,
-        storagePath: uploadedMedia.storagePath,
-        mediaWidth: uploadedMedia.width,
-        mediaHeight: uploadedMedia.height,
-        aspectRatio: uploadedMedia.aspectRatio,
+        mediaType: uploadedResult.mediaType,
+        mediaUrl: uploadedResult.downloadUrl,
+        storagePath: uploadedResult.storagePath,
+        mediaWidth: uploadedResult.width,
+        mediaHeight: uploadedResult.height,
+        aspectRatio: uploadedResult.aspectRatio,
         targetPages,
         isActive,
         startDate: startDate ? new Date(startDate).toISOString() : null,
@@ -178,8 +202,24 @@ export default function CreateAdPage() {
       toast.success("Ad created successfully in Firestore!");
       router.push("/admin/ads");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error creating ad");
+      // If media upload succeeded but saving to Firestore failed, clean up uploaded storage file
+      if (uploadedResult?.storagePath) {
+        await deleteUploadedMedia(uploadedResult.storagePath);
+      }
+
+      const isCanceled =
+        typeof err === "object" && err !== null && "code" in err && err.code === "storage/canceled";
+      if (isCanceled) {
+        toast.info("Upload canceled");
+      } else {
+        const msg = err instanceof Error ? err.message : "Error creating ad";
+        setError(msg);
+        toast.error(msg);
+      }
+    } finally {
       setSubmitting(false);
+      setUploadProgress(null);
+      setUploadTask(null);
     }
   };
 
@@ -256,7 +296,7 @@ export default function CreateAdPage() {
             Creative Media (Image or Video) <span className="text-primary">*</span>
           </label>
 
-          {!uploadedMedia && uploadProgress === null && (
+          {!mediaFile && (
             <div className="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-secondary/30 p-8 text-center transition hover:border-primary/50">
               <UploadCloud className="h-10 w-10 text-primary" />
               <p className="mt-2 text-sm font-bold text-foreground">
@@ -265,63 +305,37 @@ export default function CreateAdPage() {
               <p className="mt-1 text-xs text-muted-foreground">
                 Images (JPG, PNG, WEBP, GIF up to 10MB) or Videos (MP4, WEBM up to 50MB)
               </p>
+              <p className="mt-2 text-[11px] font-semibold text-primary/80">
+                Media will be previewed locally and uploaded only when you submit the form.
+              </p>
 
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
                 onChange={handleFileSelect}
-                className="absolute inset-0 cursor-pointer opacity-0"
-                aria-label="Upload advertisement media"
+                disabled={submitting}
+                className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                aria-label="Select advertisement media"
               />
             </div>
           )}
 
-          {/* Uploading progress bar */}
-          {uploadProgress !== null && (
-            <div className="rounded-xl border border-border bg-secondary p-5">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="flex items-center gap-2 text-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  Uploading {mediaFile?.name}...
-                </span>
-                <span className="tabular text-primary">{uploadProgress}%</span>
-              </div>
-
-              <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-background">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-
-              <div className="mt-3 text-right">
-                <button
-                  type="button"
-                  onClick={handleCancelUpload}
-                  className="text-xs font-bold text-destructive hover:underline"
-                >
-                  Cancel Upload
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Uploaded Media Preview */}
-          {uploadedMedia && (
+          {/* Local Media Preview */}
+          {mediaFile && previewUrl && (
             <div className="rounded-xl border border-border bg-secondary/50 p-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <div className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-black">
-                    {uploadedMedia.mediaType === "image" ? (
+                    {mediaType === "image" ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={uploadedMedia.downloadUrl}
-                        alt="Preview"
+                        src={previewUrl}
+                        alt="Local Preview"
                         className="h-full w-full object-contain"
                       />
                     ) : (
                       <video
-                        src={uploadedMedia.downloadUrl}
+                        src={previewUrl}
                         className="h-full w-full object-contain"
                         controls
                         muted
@@ -332,34 +346,62 @@ export default function CreateAdPage() {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
-                        {uploadedMedia.mediaType}
+                        {mediaType}
                       </span>
-                      {uploadedMedia.aspectRatio && (
+                      <span className="rounded border border-border bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        Ready to upload on save
+                      </span>
+                      {aspectRatio && (
                         <span className="tabular text-xs font-bold text-muted-foreground">
-                          Ratio: {uploadedMedia.aspectRatio}
+                          Ratio: {aspectRatio}
                         </span>
                       )}
                     </div>
-                    {uploadedMedia.width && uploadedMedia.height && (
+                    <p className="text-xs font-semibold text-foreground truncate max-w-xs">
+                      {mediaFile.name}
+                    </p>
+                    {mediaWidth && mediaHeight && (
                       <p className="tabular text-xs text-muted-foreground">
-                        {uploadedMedia.width} × {uploadedMedia.height} px
+                        {mediaWidth} × {mediaHeight} px
                       </p>
                     )}
                     <p className="tabular text-[11px] text-muted-foreground">
-                      Size: {(uploadedMedia.sizeBytes / (1024 * 1024)).toFixed(2)} MB
+                      Size: {(fileSizeBytes / (1024 * 1024)).toFixed(2)} MB
                     </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleRemoveMedia}
-                  className="flex items-center gap-1 text-xs font-bold text-destructive hover:underline"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>Remove</span>
-                </button>
+                {!submitting && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveMedia}
+                    className="flex items-center gap-1 text-xs font-bold text-destructive hover:underline cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Remove</span>
+                  </button>
+                )}
               </div>
+
+              {/* Uploading progress bar during submit */}
+              {submitting && uploadProgress !== null && (
+                <div className="mt-4 border-t border-border pt-3">
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="flex items-center gap-2 text-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      Uploading creative to Firebase Storage...
+                    </span>
+                    <span className="tabular text-primary">{uploadProgress}%</span>
+                  </div>
+
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-background">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -506,7 +548,11 @@ export default function CreateAdPage() {
             {submitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>SAVING TO FIRESTORE...</span>
+                <span>
+                  {uploadProgress !== null && uploadProgress < 100
+                    ? `UPLOADING (${uploadProgress}%)...`
+                    : "SAVING..."}
+                </span>
               </>
             ) : (
               <span>CREATE ADVERTISEMENT</span>

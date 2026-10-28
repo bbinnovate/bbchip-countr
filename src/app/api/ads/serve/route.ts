@@ -8,6 +8,13 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const page = searchParams.get("page");
     const seed = searchParams.get("seed") || undefined;
+    const excludeParam = searchParams.get("exclude");
+    const excludeIds = excludeParam
+      ? excludeParam
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : [];
 
     if (!page) {
       return NextResponse.json(
@@ -28,7 +35,12 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { ad, ads } = await adminDb.getServedAdsForPage(page as AllowedTargetPage, seed, 3);
+    const { ad, ads } = await adminDb.getServedAdsForPage(
+      page as AllowedTargetPage,
+      seed,
+      3,
+      excludeIds,
+    );
 
     return NextResponse.json(
       { ad, ads },

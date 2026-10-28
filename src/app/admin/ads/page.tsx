@@ -9,10 +9,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Eye,
   Film,
   Image as ImageIcon,
   Loader2,
   MoreVertical,
+  MousePointerClick,
   Pencil,
   Plus,
   RefreshCw,
@@ -331,6 +333,28 @@ export default function AdminAdsListPage() {
                             <ExternalLink className="h-2.5 w-2.5" />
                           </a>
                         )}
+                      </div>
+
+                      {/* Performance Metrics: Views, Clicks, and CTR */}
+                      <div className="flex flex-wrap items-center gap-2 pt-1.5">
+                        <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
+                          <Eye className="h-3 w-3 text-muted-foreground" />
+                          <span className="tabular">{(ad.views ?? 0).toLocaleString()} views</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
+                          <MousePointerClick className="h-3 w-3 text-muted-foreground" />
+                          <span className="tabular">
+                            {(ad.clicks ?? 0).toLocaleString()} clicks
+                          </span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary">
+                          <span className="tabular">
+                            {ad.views && ad.views > 0
+                              ? `${(((ad.clicks ?? 0) / ad.views) * 100).toFixed(1)}%`
+                              : "0.0%"}{" "}
+                            CTR
+                          </span>
+                        </span>
                       </div>
                     </div>
                   </div>

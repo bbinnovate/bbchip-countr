@@ -5,13 +5,18 @@ import { useEffect, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
+  BarChart3,
   CheckCircle2,
+  ExternalLink,
+  Eye,
   Film,
   Image as ImageIcon,
   Layers,
   Megaphone,
+  MousePointerClick,
   Plus,
   RefreshCw,
+  TrendingUp,
   Video,
 } from "lucide-react";
 import type { Ad } from "@/lib/firebase-admin";
@@ -22,8 +27,12 @@ interface StatsData {
   inactive: number;
   images: number;
   videos: number;
+  totalViews: number;
+  totalClicks: number;
+  ctr: number;
   byPage: Record<string, number>;
   recent: Ad[];
+  topPerforming: Ad[];
 }
 
 export default function AdminDashboardPage() {
@@ -105,88 +114,247 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* Primary Metrics Grid */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {/* Total Ads */}
-        <div className="surface p-4">
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span className="text-[10px] font-bold tracking-widest uppercase">Total Ads</span>
-            <Layers className="h-4 w-4 text-primary" />
+      {/* Performance & Analytics KPIs */}
+      <div className="space-y-3">
+        <h2 className="flex items-center gap-1.5 text-xs font-bold tracking-[0.2em] text-muted-foreground uppercase">
+          <BarChart3 className="h-3.5 w-3.5 text-primary" />
+          <span>Performance Overview</span>
+        </h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {/* Total Views */}
+          <div className="surface metallic p-4 border border-primary/20">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">
+                Total Views (Impressions)
+              </span>
+              <Eye className="h-4 w-4 text-primary" />
+            </div>
+            <div className="tabular mt-2 text-2xl sm:text-3xl font-extrabold text-foreground">
+              {loading ? (
+                <div className="h-8 w-16 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.totalViews ?? 0).toLocaleString()
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Drawer impressions delivered</p>
           </div>
-          <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
-            {loading ? (
-              <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
-            ) : (
-              (stats?.total ?? 0)
-            )}
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">Registered creatives</p>
-        </div>
 
-        {/* Active Ads */}
-        <div className="surface p-4">
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span className="text-[10px] font-bold tracking-widest uppercase">Active Ads</span>
-            <CheckCircle2 className="h-4 w-4 text-success" />
+          {/* Total Clicks */}
+          <div className="surface metallic p-4 border border-primary/20">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Total Clicks</span>
+              <MousePointerClick className="h-4 w-4 text-primary" />
+            </div>
+            <div className="tabular mt-2 text-2xl sm:text-3xl font-extrabold text-foreground">
+              {loading ? (
+                <div className="h-8 w-16 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.totalClicks ?? 0).toLocaleString()
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Click-Through URL engagements</p>
           </div>
-          <div className="tabular mt-2 text-2xl font-extrabold text-success">
-            {loading ? (
-              <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
-            ) : (
-              (stats?.active ?? 0)
-            )}
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">Eligible for delivery</p>
-        </div>
 
-        {/* Inactive Ads */}
-        <div className="surface p-4">
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span className="text-[10px] font-bold tracking-widest uppercase">Inactive</span>
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          {/* Overall CTR */}
+          <div className="surface metallic p-4 border border-primary/30 bg-primary/5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Overall CTR</span>
+              <TrendingUp className="h-4 w-4 text-primary" />
+            </div>
+            <div className="tabular mt-2 text-2xl sm:text-3xl font-extrabold text-primary">
+              {loading ? (
+                <div className="h-8 w-16 animate-pulse rounded bg-secondary" />
+              ) : (
+                `${stats?.ctr ?? 0}%`
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Click-through conversion rate</p>
           </div>
-          <div className="tabular mt-2 text-2xl font-extrabold text-muted-foreground">
-            {loading ? (
-              <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
-            ) : (
-              (stats?.inactive ?? 0)
-            )}
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">Paused or draft</p>
-        </div>
-
-        {/* Image Ads */}
-        <div className="surface p-4">
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span className="text-[10px] font-bold tracking-widest uppercase">Image Ads</span>
-            <ImageIcon className="h-4 w-4 text-accent-foreground" />
-          </div>
-          <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
-            {loading ? (
-              <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
-            ) : (
-              (stats?.images ?? 0)
-            )}
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">Static & animated</p>
-        </div>
-
-        {/* Video Ads */}
-        <div className="surface col-span-2 p-4 sm:col-span-1">
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span className="text-[10px] font-bold tracking-widest uppercase">Video Ads</span>
-            <Film className="h-4 w-4 text-primary" />
-          </div>
-          <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
-            {loading ? (
-              <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
-            ) : (
-              (stats?.videos ?? 0)
-            )}
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">MP4 & WebM media</p>
         </div>
       </div>
+
+      {/* Inventory Metrics Grid */}
+      <div className="space-y-3">
+        <h2 className="text-xs font-bold tracking-[0.2em] text-muted-foreground uppercase">
+          Inventory Breakdown
+        </h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {/* Total Ads */}
+          <div className="surface p-4">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Total Ads</span>
+              <Layers className="h-4 w-4 text-primary" />
+            </div>
+            <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
+              {loading ? (
+                <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.total ?? 0)
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Registered creatives</p>
+          </div>
+
+          {/* Active Ads */}
+          <div className="surface p-4">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Active Ads</span>
+              <CheckCircle2 className="h-4 w-4 text-success" />
+            </div>
+            <div className="tabular mt-2 text-2xl font-extrabold text-success">
+              {loading ? (
+                <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.active ?? 0)
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Eligible for delivery</p>
+          </div>
+
+          {/* Inactive Ads */}
+          <div className="surface p-4">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Inactive</span>
+              <AlertCircle className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="tabular mt-2 text-2xl font-extrabold text-muted-foreground">
+              {loading ? (
+                <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.inactive ?? 0)
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Paused or draft</p>
+          </div>
+
+          {/* Image Ads */}
+          <div className="surface p-4">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Image Ads</span>
+              <ImageIcon className="h-4 w-4 text-accent-foreground" />
+            </div>
+            <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
+              {loading ? (
+                <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.images ?? 0)
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Static & animated</p>
+          </div>
+
+          {/* Video Ads */}
+          <div className="surface col-span-2 p-4 sm:col-span-1">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[10px] font-bold tracking-widest uppercase">Video Ads</span>
+              <Film className="h-4 w-4 text-primary" />
+            </div>
+            <div className="tabular mt-2 text-2xl font-extrabold text-foreground">
+              {loading ? (
+                <div className="h-7 w-12 animate-pulse rounded bg-secondary" />
+              ) : (
+                (stats?.videos ?? 0)
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">MP4 & WebM media</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Top Performing Creatives */}
+      {stats && stats.topPerforming && stats.topPerforming.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-1.5 text-xs font-bold tracking-[0.2em] text-muted-foreground uppercase">
+              <TrendingUp className="h-3.5 w-3.5 text-primary" />
+              <span>Top Performing Creatives</span>
+            </h2>
+            <Link
+              href="/admin/ads"
+              className="flex items-center gap-1 text-xs font-bold text-primary transition hover:underline"
+            >
+              <span>View In Manager</span>
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+
+          <div className="surface divide-y divide-border/60 overflow-hidden">
+            {stats.topPerforming.map((ad, idx) => {
+              const adCtr =
+                ad.views && ad.views > 0 ? (((ad.clicks ?? 0) / ad.views) * 100).toFixed(1) : "0.0";
+
+              return (
+                <div
+                  key={ad.id}
+                  className="flex flex-col gap-3 p-4 transition hover:bg-secondary/20 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-black text-muted-foreground">
+                      #{idx + 1}
+                    </span>
+                    <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-secondary">
+                      {ad.mediaType === "image" ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={ad.mediaUrl}
+                          alt={ad.title}
+                          className="h-full w-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <Video className="h-5 w-5 text-primary" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-extrabold text-foreground">{ad.title}</p>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase ${
+                            ad.isActive
+                              ? "border border-success/40 bg-success/10 text-success"
+                              : "border border-border bg-secondary text-muted-foreground"
+                          }`}
+                        >
+                          {ad.isActive ? "Active" : "Inactive"}
+                        </span>
+                        <span className="rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground uppercase">
+                          {ad.mediaType}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
+                          <Eye className="h-3 w-3 text-muted-foreground" />
+                          <span className="tabular">{(ad.views ?? 0).toLocaleString()} views</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
+                          <MousePointerClick className="h-3 w-3 text-muted-foreground" />
+                          <span className="tabular">
+                            {(ad.clicks ?? 0).toLocaleString()} clicks
+                          </span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary">
+                          <span className="tabular">{adCtr}% CTR</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between sm:justify-end gap-2 border-t border-border/40 pt-2 sm:border-t-0 sm:pt-0">
+                    <Link
+                      href={`/admin/ads/${ad.id}/edit`}
+                      className="btn-ghost px-3 py-1.5 text-[11px] font-bold"
+                    >
+                      Edit
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Target Page Breakdown Section */}
       <div className="space-y-3">
@@ -318,7 +486,7 @@ export default function AdminDashboardPage() {
                       </span>
                     </div>
 
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>Targeting:</span>
                       {ad.targetPages.map((page) => (
                         <span
@@ -328,6 +496,24 @@ export default function AdminDashboardPage() {
                           {page}
                         </span>
                       ))}
+
+                      {/* Performance metrics */}
+                      <span className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.2 text-[10px] font-bold text-foreground">
+                        <Eye className="h-2.5 w-2.5 text-muted-foreground" />
+                        <span>{ad.views ?? 0}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.2 text-[10px] font-bold text-foreground">
+                        <MousePointerClick className="h-2.5 w-2.5 text-muted-foreground" />
+                        <span>{ad.clicks ?? 0}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.2 text-[10px] font-extrabold text-primary">
+                        <span>
+                          {ad.views && ad.views > 0
+                            ? `${(((ad.clicks ?? 0) / ad.views) * 100).toFixed(1)}%`
+                            : "0.0%"}{" "}
+                          CTR
+                        </span>
+                      </span>
                     </div>
                   </div>
                 </div>

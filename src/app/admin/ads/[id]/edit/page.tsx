@@ -8,17 +8,21 @@ import {
   ArrowLeft,
   Calendar,
   Check,
+  Eye,
   Film,
   Image as ImageIcon,
   Link as LinkIcon,
   Loader2,
+  MousePointerClick,
   Trash2,
+  TrendingUp,
   UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
 import {
   deleteUploadedMedia,
+  detectMediaDimensions,
   startMediaUpload,
   validateMediaFile,
   type MediaUploadResult,
@@ -47,7 +51,7 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
   const [endDate, setEndDate] = useState("");
   const [clickUrl, setClickUrl] = useState("");
 
-  // Media State
+  // Existing Media State
   const [currentMediaUrl, setCurrentMediaUrl] = useState("");
   const [currentStoragePath, setCurrentStoragePath] = useState("");
   const [mediaType, setMediaType] = useState<"image" | "video">("image");
@@ -55,14 +59,29 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
   const [mediaHeight, setMediaHeight] = useState<number | undefined>();
   const [aspectRatio, setAspectRatio] = useState<string | undefined>();
 
-  // Replacement Media Upload State
-  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  // Replacement Media State (local preview before submit)
+  const [replacementFile, setReplacementFile] = useState<File | null>(null);
+  const [replacementPreviewUrl, setReplacementPreviewUrl] = useState<string | null>(null);
+  const [replacementMediaType, setReplacementMediaType] = useState<"image" | "video">("image");
+  const [replacementWidth, setReplacementWidth] = useState<number | undefined>();
+  const [replacementHeight, setReplacementHeight] = useState<number | undefined>();
+  const [replacementAspectRatio, setReplacementAspectRatio] = useState<string | undefined>();
+  const [replacementSizeBytes, setReplacementSizeBytes] = useState<number>(0);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadTask, setUploadTask] = useState<UploadTask | null>(null);
 
   // Submission State
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Cleanup replacement object URL on unmount or change
+  useEffect(() => {
+    return () => {
+      if (replacementPreviewUrl) {
+        URL.revokeObjectURL(replacementPreviewUrl);
+      }
+    };
+  }, [replacementPreviewUrl]);
 
   useEffect(() => {
     fetch(`/api/admin/ads/${id}`)
@@ -115,37 +134,38 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
       return;
     }
 
-    setMediaFile(file);
-    setError(null);
-    setUploadProgress(0);
+    if (replacementPreviewUrl) {
+      URL.revokeObjectURL(replacementPreviewUrl);
+    }
 
-    const { task, promise } = startMediaUpload(file, (pct) => {
-      setUploadProgress(pct);
-    });
-    setUploadTask(task);
+    const localUrl = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith("video/");
+    setReplacementFile(file);
+    setReplacementPreviewUrl(localUrl);
+    setReplacementMediaType(isVideo ? "video" : "image");
+    setReplacementSizeBytes(file.size);
+    setError(null);
 
     try {
-      const result: MediaUploadResult = await promise;
-      setCurrentMediaUrl(result.downloadUrl);
-      setCurrentStoragePath(result.storagePath);
-      setMediaType(result.mediaType);
-      setMediaWidth(result.width);
-      setMediaHeight(result.height);
-      setAspectRatio(result.aspectRatio);
-      toast.success("New creative uploaded to Firebase Storage");
-    } catch (err: unknown) {
-      const isCanceled =
-        typeof err === "object" && err !== null && "code" in err && err.code === "storage/canceled";
-      if (isCanceled) {
-        toast.info("Upload canceled");
-      } else {
-        toast.error("Failed to upload replacement media");
-      }
-      setMediaFile(null);
-    } finally {
-      setUploadProgress(null);
-      setUploadTask(null);
+      const dimensions = await detectMediaDimensions(file);
+      setReplacementWidth(dimensions.width);
+      setReplacementHeight(dimensions.height);
+      setReplacementAspectRatio(dimensions.aspectRatio);
+    } catch (err) {
+      console.warn("Failed to detect replacement media dimensions:", err);
     }
+  };
+
+  const handleCancelReplacement = () => {
+    if (replacementPreviewUrl) {
+      URL.revokeObjectURL(replacementPreviewUrl);
+    }
+    setReplacementFile(null);
+    setReplacementPreviewUrl(null);
+    setReplacementWidth(undefined);
+    setReplacementHeight(undefined);
+    setReplacementAspectRatio(undefined);
+    setReplacementSizeBytes(0);
   };
 
   const toggleTargetPage = (pageId: string) => {
@@ -174,20 +194,45 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
     }
 
     setSubmitting(true);
+    let uploadedResult: MediaUploadResult | null = null;
 
     try {
+      let finalMediaUrl = currentMediaUrl;
+      let finalStoragePath = currentStoragePath;
+      let finalMediaType = mediaType;
+      let finalWidth = mediaWidth;
+      let finalHeight = mediaHeight;
+      let finalAspectRatio = aspectRatio;
+
+      // Only upload to Firebase Storage if a new replacement file was selected
+      if (replacementFile) {
+        setUploadProgress(0);
+        const { task, promise } = startMediaUpload(replacementFile, (pct) => {
+          setUploadProgress(pct);
+        });
+        setUploadTask(task);
+
+        uploadedResult = await promise;
+        finalMediaUrl = uploadedResult.downloadUrl;
+        finalStoragePath = uploadedResult.storagePath;
+        finalMediaType = uploadedResult.mediaType;
+        finalWidth = uploadedResult.width;
+        finalHeight = uploadedResult.height;
+        finalAspectRatio = uploadedResult.aspectRatio;
+      }
+
       const match = document.cookie.match(/(?:^|; )ledger_csrf_token=([^;]*)/);
       const csrfToken = match && match[1] ? decodeURIComponent(match[1]) : "";
 
       const payload = {
         title: title.trim(),
         description: description.trim() || undefined,
-        mediaType,
-        mediaUrl: currentMediaUrl,
-        storagePath: currentStoragePath,
-        mediaWidth,
-        mediaHeight,
-        aspectRatio,
+        mediaType: finalMediaType,
+        mediaUrl: finalMediaUrl,
+        storagePath: finalStoragePath,
+        mediaWidth: finalWidth,
+        mediaHeight: finalHeight,
+        aspectRatio: finalAspectRatio,
         targetPages,
         isActive,
         startDate: startDate ? new Date(startDate).toISOString() : null,
@@ -209,11 +254,36 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
         throw new Error(data.error || "Failed to update ad");
       }
 
+      // If replacement file was uploaded and old file existed, delete old file from storage
+      if (
+        uploadedResult &&
+        currentStoragePath &&
+        currentStoragePath !== uploadedResult.storagePath
+      ) {
+        await deleteUploadedMedia(currentStoragePath);
+      }
+
       toast.success("Ad updated successfully in Firestore!");
       router.push("/admin/ads");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error updating ad");
+      // If newly uploaded replacement failed to save to Firestore, delete the new file to avoid orphan
+      if (uploadedResult?.storagePath) {
+        await deleteUploadedMedia(uploadedResult.storagePath);
+      }
+
+      const isCanceled =
+        typeof err === "object" && err !== null && "code" in err && err.code === "storage/canceled";
+      if (isCanceled) {
+        toast.info("Upload canceled");
+      } else {
+        const msg = err instanceof Error ? err.message : "Error updating ad";
+        setError(msg);
+        toast.error(msg);
+      }
+    } finally {
       setSubmitting(false);
+      setUploadProgress(null);
+      setUploadTask(null);
     }
   };
 
@@ -245,6 +315,43 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
           <p className="text-xs text-muted-foreground">Update ad targeting, media, or schedule.</p>
         </div>
       </div>
+
+      {/* Ad Performance Metrics Summary */}
+      {ad && (
+        <div className="surface p-4 grid grid-cols-3 gap-3 border border-primary/20">
+          <div className="flex flex-col">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+              <Eye className="h-3 w-3 text-primary" />
+              <span>Views</span>
+            </span>
+            <span className="tabular mt-1 text-xl font-extrabold text-foreground">
+              {(ad.views ?? 0).toLocaleString()}
+            </span>
+          </div>
+
+          <div className="flex flex-col">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+              <MousePointerClick className="h-3 w-3 text-primary" />
+              <span>Clicks</span>
+            </span>
+            <span className="tabular mt-1 text-xl font-extrabold text-foreground">
+              {(ad.clicks ?? 0).toLocaleString()}
+            </span>
+          </div>
+
+          <div className="flex flex-col">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+              <TrendingUp className="h-3 w-3 text-primary" />
+              <span>CTR</span>
+            </span>
+            <span className="tabular mt-1 text-xl font-extrabold text-primary">
+              {ad.views && ad.views > 0
+                ? `${(((ad.clicks ?? 0) / ad.views) * 100).toFixed(1)}%`
+                : "0.0%"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs font-semibold text-destructive">
@@ -297,83 +404,151 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
             Creative Media
           </label>
 
-          <div className="rounded-xl border border-border bg-secondary/40 p-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-4">
-                <div className="relative flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-black">
-                  {mediaType === "image" ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={currentMediaUrl}
-                      alt="Preview"
-                      className="h-full w-full object-contain"
-                    />
-                  ) : (
-                    <video
-                      src={currentMediaUrl}
-                      className="h-full w-full object-contain"
-                      controls
-                      muted
-                    />
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
-                      {mediaType}
-                    </span>
-                    {aspectRatio && (
-                      <span className="tabular text-xs font-bold text-muted-foreground">
-                        Ratio: {aspectRatio}
-                      </span>
+          {/* If replacement is selected, show local replacement preview */}
+          {replacementFile && replacementPreviewUrl ? (
+            <div className="rounded-xl border border-primary/40 bg-secondary/50 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="relative flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-black">
+                    {replacementMediaType === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={replacementPreviewUrl}
+                        alt="Replacement Preview"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <video
+                        src={replacementPreviewUrl}
+                        className="h-full w-full object-contain"
+                        controls
+                        muted
+                      />
                     )}
                   </div>
-                  {mediaWidth && mediaHeight && (
-                    <p className="tabular text-xs text-muted-foreground">
-                      {mediaWidth} × {mediaHeight} px
+
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
+                        {replacementMediaType}
+                      </span>
+                      <span className="rounded border border-primary/30 bg-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
+                        New Creative Selected
+                      </span>
+                      {replacementAspectRatio && (
+                        <span className="tabular text-xs font-bold text-muted-foreground">
+                          Ratio: {replacementAspectRatio}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs font-semibold text-foreground truncate max-w-xs">
+                      {replacementFile.name}
                     </p>
-                  )}
+                    {replacementWidth && replacementHeight && (
+                      <p className="tabular text-xs text-muted-foreground">
+                        {replacementWidth} × {replacementHeight} px
+                      </p>
+                    )}
+                    <p className="tabular text-[11px] text-muted-foreground">
+                      Size: {(replacementSizeBytes / (1024 * 1024)).toFixed(2)} MB · Uploads only on
+                      save
+                    </p>
+                  </div>
                 </div>
+
+                {!submitting && (
+                  <button
+                    type="button"
+                    onClick={handleCancelReplacement}
+                    className="flex items-center gap-1 text-xs font-bold text-destructive hover:underline cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Cancel Replacement</span>
+                  </button>
+                )}
               </div>
 
-              {/* Replace Media Button */}
-              <div className="relative">
-                <button
-                  type="button"
-                  className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs font-bold"
-                >
-                  <UploadCloud className="h-4 w-4" />
-                  <span>Replace Media</span>
-                </button>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
-                  onChange={handleFileSelect}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label="Replace creative media"
-                />
-              </div>
+              {submitting && uploadProgress !== null && (
+                <div className="mt-4 border-t border-border pt-3">
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="flex items-center gap-2 text-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                      Uploading replacement to Firebase Storage...
+                    </span>
+                    <span className="tabular text-primary">{uploadProgress}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-background">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
+          ) : (
+            <div className="rounded-xl border border-border bg-secondary/40 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="relative flex h-20 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-black">
+                    {mediaType === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={currentMediaUrl}
+                        alt="Current Creative"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <video
+                        src={currentMediaUrl}
+                        className="h-full w-full object-contain"
+                        controls
+                        muted
+                      />
+                    )}
+                  </div>
 
-            {uploadProgress !== null && (
-              <div className="mt-4 border-t border-border/70 pt-3">
-                <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="flex items-center gap-2 text-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                    Uploading replacement media...
-                  </span>
-                  <span className="tabular text-primary">{uploadProgress}%</span>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
+                        {mediaType}
+                      </span>
+                      {aspectRatio && (
+                        <span className="tabular text-xs font-bold text-muted-foreground">
+                          Ratio: {aspectRatio}
+                        </span>
+                      )}
+                    </div>
+                    {mediaWidth && mediaHeight && (
+                      <p className="tabular text-xs text-muted-foreground">
+                        {mediaWidth} × {mediaHeight} px
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-background">
-                  <div
-                    className="h-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
+
+                {/* Replace Media Button */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    <UploadCloud className="h-4 w-4" />
+                    <span>Replace Media</span>
+                  </button>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+                    onChange={handleFileSelect}
+                    disabled={submitting}
+                    className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                    aria-label="Replace creative media"
                   />
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Target Pages */}
@@ -514,7 +689,11 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
             {submitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>SAVING CHANGES...</span>
+                <span>
+                  {uploadProgress !== null && uploadProgress < 100
+                    ? `UPLOADING (${uploadProgress}%)...`
+                    : "SAVING CHANGES..."}
+                </span>
               </>
             ) : (
               <span>SAVE CHANGES</span>
