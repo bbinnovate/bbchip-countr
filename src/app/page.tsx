@@ -11,7 +11,7 @@ import { usePokerStore } from "@/lib/use-poker-store";
 import { formatMoney, totalPool, netOf, type Session } from "@/lib/poker";
 
 export default function Dashboard() {
-  const { active, history } = usePokerStore();
+  const { active, history, ready } = usePokerStore();
   const recent = history.slice(0, 3);
   const [selected, setSelected] = useState<Session | null>(null);
 
@@ -118,7 +118,7 @@ export default function Dashboard() {
       )}
 
       {selected && <SessionLedgerModal session={selected} onClose={() => setSelected(null)} />}
-      <AdDrawer targetPage="/" />
+      <AdDrawer targetPage="/" ready={ready} />
     </Shell>
   );
 }

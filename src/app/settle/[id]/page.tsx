@@ -199,7 +199,7 @@ export default function SettleScreen() {
         </span>
       </button>
 
-      <AdDrawer targetPage="/settle/[id]" />
+      <AdDrawer targetPage="/settle/[id]" ready={ready} />
     </Shell>
   );
 }

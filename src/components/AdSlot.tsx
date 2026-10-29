@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { ExternalLink, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PublicAd } from "@/lib/firebase-admin";
+import type { PublicAd, StaticAdType } from "@/lib/firebase-admin";
 
 type Props = {
   /** Which screen the slot sits on: "home" | "history" | "settle" */
@@ -21,50 +23,124 @@ const PLACEMENT_PAGES: Record<Props["placement"], string> = {
   settle: "/settle/[id]",
 };
 
-export function AdSlot({ placement, type = "auto", count = 4, className }: Props) {
-  const [ads, setAds] = useState<PublicAd[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const trackedViewsRef = useRef<Set<string>>(new Set());
+// Module-level in-memory cache to keep ads instantaneous on page navigation (like RECENT GAMES)
+const inMemoryAds = new Map<string, PublicAd[]>();
+const trackedViewsGlobal = new Set<string>();
 
+// One-time cleanup for any stale sessionStorage cache from previous builds
+if (typeof window !== "undefined") {
+  try {
+    for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+      const key = window.sessionStorage.key(i);
+      if (key && key.startsWith("ad_slot_cache_")) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function AdSlot({ placement, type = "auto", count = 4, className }: Props) {
   const targetPage = PLACEMENT_PAGES[placement] || "/";
+
+  // Initial state reads synchronously from memory cache if already visited in this session
+  const [ads, setAds] = useState<PublicAd[]>(() => inMemoryAds.get(targetPage) ?? []);
+  const [loaded, setLoaded] = useState<boolean>(() => inMemoryAds.has(targetPage));
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadStaticAds() {
-      try {
-        const queryCount = Math.max(count, 6);
-        const res = await fetch(
-          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&isStatic=true&count=${queryCount}`,
-          { cache: "no-store" },
-        );
+    // Real-time Firestore subscription: updates LIVE whenever admin adds/changes ads
+    // (exact same real-time behavior as RECENT GAMES)
+    const unsub = onSnapshot(
+      collection(db, "ads"),
+      (snapshot) => {
+        const now = Date.now();
+        const candidateAds: (PublicAd & { createdAt?: string })[] = [];
 
-        if (!res.ok) {
-          if (isMounted) setLoaded(true);
-          return;
+        for (const docSnap of snapshot.docs) {
+          const data = docSnap.data();
+          const isActive = data.isActive === true;
+          const isStatic = data.isStatic === true;
+          const targetPages: string[] = Array.isArray(data.targetPages) ? data.targetPages : [];
+
+          if (!isActive || !isStatic) continue;
+          if (!targetPages.includes(targetPage)) continue;
+
+          // Date scheduling checks
+          if (data.startDate) {
+            const start = new Date(data.startDate).getTime();
+            if (!isNaN(start) && now < start) continue;
+          }
+          if (data.endDate) {
+            const end = new Date(data.endDate).getTime();
+            if (!isNaN(end) && now > end) continue;
+          }
+
+          candidateAds.push({
+            id: docSnap.id,
+            title: String(data.title || ""),
+            description: data.description ? String(data.description) : undefined,
+            mediaType: data.mediaType === "video" ? "video" : "image",
+            mediaUrl: String(data.mediaUrl || ""),
+            mediaWidth: typeof data.mediaWidth === "number" ? data.mediaWidth : undefined,
+            mediaHeight: typeof data.mediaHeight === "number" ? data.mediaHeight : undefined,
+            aspectRatio: data.aspectRatio ? String(data.aspectRatio) : undefined,
+            clickUrl: data.clickUrl ? String(data.clickUrl) : null,
+            isStatic: true,
+            staticType:
+              data.staticType === "banner" || data.staticType === "product_card"
+                ? data.staticType
+                : "banner",
+            createdAt: typeof data.createdAt === "string" ? data.createdAt : undefined,
+          });
         }
 
-        const data = await res.json();
-        const fetched: PublicAd[] =
-          Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
+        // Sort latest first
+        candidateAds.sort((a, b) => {
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return timeB - timeA;
+        });
 
-        // Strictly keep only static ads
-        const validStatic = fetched.filter((ad) => ad.isStatic);
+        const finalAds: PublicAd[] = candidateAds.map(({ createdAt: _, ...ad }) => ad);
+
+        // Update module-level cache for instant 0ms restoration on page transitions
+        inMemoryAds.set(targetPage, finalAds);
 
         if (isMounted) {
-          setAds(validStatic);
+          setAds(finalAds);
           setLoaded(true);
         }
-      } catch (err) {
-        console.error("AdSlot fetch error:", err);
-        if (isMounted) setLoaded(true);
-      }
-    }
-
-    void loadStaticAds();
+      },
+      (error) => {
+        console.warn("Firestore ad subscription error, falling back to serve API:", error);
+        void fetch(
+          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&isStatic=true&count=${Math.max(count, 6)}`,
+          { cache: "no-store" },
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!data || !isMounted) return;
+            const fetched: PublicAd[] =
+              Array.isArray(data.ads) && data.ads.length > 0
+                ? data.ads
+                : data.ad
+                  ? [data.ad]
+                  : [];
+            const valid = fetched.filter((a) => a.isStatic);
+            inMemoryAds.set(targetPage, valid);
+            setAds(valid);
+            setLoaded(true);
+          })
+          .catch((err) => console.error("Fallback ads fetch failed:", err));
+      },
+    );
 
     return () => {
       isMounted = false;
+      unsub();
     };
   }, [targetPage, count]);
 
@@ -72,8 +148,8 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
   useEffect(() => {
     if (ads.length > 0) {
       for (const ad of ads) {
-        if (!trackedViewsRef.current.has(ad.id)) {
-          trackedViewsRef.current.add(ad.id);
+        if (!trackedViewsGlobal.has(ad.id)) {
+          trackedViewsGlobal.add(ad.id);
           try {
             void fetch("/api/ads/track", {
               method: "POST",

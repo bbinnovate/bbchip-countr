@@ -7,8 +7,10 @@ import {
 } from "firebase/storage";
 import { storage } from "@/lib/firebase";
 
-export const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
-export const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+export const TARGET_IMAGE_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
+export const MAX_IMAGE_INPUT_BYTES = 30 * 1024 * 1024; // 30MB max initial selection for auto-compression
+export const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_INPUT_BYTES;
+export const MAX_VIDEO_SIZE_BYTES = 7 * 1024 * 1024; // 7MB max video size
 
 export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
@@ -35,21 +37,131 @@ export function validateMediaFile(file: File): { valid: boolean; error?: string 
     };
   }
 
-  if (isImage && file.size > MAX_IMAGE_SIZE_BYTES) {
+  if (isImage && file.size > MAX_IMAGE_INPUT_BYTES) {
     return {
       valid: false,
-      error: `Image exceeds maximum allowed size of 10MB (${(file.size / (1024 * 1024)).toFixed(1)}MB).`,
+      error: `Image exceeds maximum allowed size of 30MB (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose an image under 30MB.`,
     };
   }
 
   if (isVideo && file.size > MAX_VIDEO_SIZE_BYTES) {
     return {
       valid: false,
-      error: `Video exceeds maximum allowed size of 50MB (${(file.size / (1024 * 1024)).toFixed(1)}MB).`,
+      error: `Video exceeds maximum allowed size of 7MB (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please upload a video under 7MB.`,
     };
   }
 
   return { valid: true };
+}
+
+/**
+ * Automatically compress and resize an image file client-side using HTML5 Canvas
+ * so it fits comfortably within targetSizeBytes (1MB).
+ */
+export async function compressImage(
+  file: File,
+  targetSizeBytes: number = TARGET_IMAGE_SIZE_BYTES,
+): Promise<File> {
+  // If already <= 1MB, no need to compress
+  if (file.size <= targetSizeBytes) {
+    return file;
+  }
+
+  // Preserve animated GIFs
+  if (file.type === "image/gif") {
+    return file;
+  }
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = async () => {
+      URL.revokeObjectURL(objectUrl);
+
+      let width = img.naturalWidth;
+      let height = img.naturalHeight;
+
+      // Restrict maximum dimension for web display to 1920px
+      const MAX_DIMENSION = 1920;
+      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        if (width > height) {
+          height = Math.round((height * MAX_DIMENSION) / width);
+          width = MAX_DIMENSION;
+        } else {
+          width = Math.round((width * MAX_DIMENSION) / height);
+          height = MAX_DIMENSION;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // WebP provides smaller payloads with transparency support; JPEG for others
+      const outputType =
+        file.type === "image/png" || file.type === "image/webp" ? "image/webp" : "image/jpeg";
+      const ext = outputType === "image/webp" ? ".webp" : ".jpg";
+      const baseName = file.name.replace(/\.[^/.]+$/, "");
+      const newFileName = `${baseName}${ext}`;
+
+      const getBlob = (c: HTMLCanvasElement, mime: string, q: number): Promise<Blob | null> =>
+        new Promise((res) => c.toBlob(res, mime, q));
+
+      // Iteratively adjust quality to fit under target size
+      let quality = 0.88;
+      let blob = await getBlob(canvas, outputType, quality);
+
+      while (blob && blob.size > targetSizeBytes && quality > 0.35) {
+        quality -= 0.12;
+        blob = await getBlob(canvas, outputType, quality);
+      }
+
+      // If still exceeding targetSizeBytes, progressively scale down canvas resolution
+      if (blob && blob.size > targetSizeBytes) {
+        let currentScale = 0.8;
+        while (blob && blob.size > targetSizeBytes && currentScale >= 0.3) {
+          const scaledCanvas = document.createElement("canvas");
+          scaledCanvas.width = Math.max(300, Math.round(width * currentScale));
+          scaledCanvas.height = Math.max(200, Math.round(height * currentScale));
+          const scaledCtx = scaledCanvas.getContext("2d");
+          if (scaledCtx) {
+            scaledCtx.imageSmoothingEnabled = true;
+            scaledCtx.imageSmoothingQuality = "high";
+            scaledCtx.drawImage(canvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+            blob = await getBlob(scaledCanvas, outputType, 0.75);
+          }
+          currentScale -= 0.15;
+        }
+      }
+
+      if (blob && blob.size < file.size) {
+        const compressedFile = new File([blob], newFileName, {
+          type: outputType,
+          lastModified: Date.now(),
+        });
+        resolve(compressedFile);
+      } else {
+        resolve(file);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+
+    img.src = objectUrl;
+  });
 }
 
 // Compute aspect ratio string like "16:9", "1:1", "3:1", etc.

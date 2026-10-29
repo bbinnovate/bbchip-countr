@@ -22,9 +22,11 @@ import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
 import { cn } from "@/lib/utils";
 import {
+  compressImage,
   deleteUploadedMedia,
   detectMediaDimensions,
   startMediaUpload,
+  TARGET_IMAGE_SIZE_BYTES,
   validateMediaFile,
   type MediaUploadResult,
 } from "@/lib/storage-client";
@@ -130,13 +132,33 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
   }, [id, router]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const rawFile = e.target.files?.[0];
+    if (!rawFile) return;
 
-    const validation = validateMediaFile(file);
+    // Reset input value so re-selecting triggers change
+    e.target.value = "";
+
+    const validation = validateMediaFile(rawFile);
     if (!validation.valid) {
       toast.error(validation.error);
       return;
+    }
+
+    let file = rawFile;
+    if (file.type.startsWith("image/") && file.size > TARGET_IMAGE_SIZE_BYTES) {
+      const toastId = toast.loading(
+        `Compressing image (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) to under 1 MB...`,
+      );
+      try {
+        file = await compressImage(file, TARGET_IMAGE_SIZE_BYTES);
+        toast.success(
+          `Image compressed: ${(rawFile.size / (1024 * 1024)).toFixed(1)} MB → ${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+          { id: toastId },
+        );
+      } catch (err) {
+        toast.dismiss(toastId);
+        console.warn("Failed to auto-compress image:", err);
+      }
     }
 
     if (replacementPreviewUrl) {

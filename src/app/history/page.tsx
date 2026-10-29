@@ -12,7 +12,7 @@ import { formatMoney, totalPool, type Session } from "@/lib/poker";
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
 export default function HistoryPage() {
-  const { history } = usePokerStore();
+  const { history, ready } = usePokerStore();
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -119,7 +119,7 @@ export default function HistoryPage() {
       )}
 
       {selected && <SessionLedgerModal session={selected} onClose={() => setSelected(null)} />}
-      <AdDrawer targetPage="/history" />
+      <AdDrawer targetPage="/history" ready={ready} />
     </Shell>
   );
 }

@@ -7,6 +7,10 @@ import type { AllowedTargetPage, PublicAd } from "@/lib/firebase-admin";
 interface AdDrawerProps {
   targetPage: AllowedTargetPage;
   className?: string;
+  /** Delay in ms after page is ready before fetching and showing drawer (default: 3000ms) */
+  delayMs?: number;
+  /** Whether the host page and its data are fully loaded/ready (default: true) */
+  ready?: boolean;
 }
 
 const DISMISSED_ADS_KEY = "ad_drawer_dismissed_ads";
@@ -36,19 +40,30 @@ function markAdDismissedThisSession(adId: string): void {
   }
 }
 
-export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
+export function AdDrawer({
+  targetPage,
+  className = "",
+  delayMs = 3000,
+  ready = true,
+}: AdDrawerProps) {
   const [adsList, setAdsList] = useState<PublicAd[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
   const [isRendered, setIsRendered] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const delayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let isMounted = true;
-    let animTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Do not start delay timer or API fetch if page data is not ready yet
+    if (!ready) {
+      return;
+    }
 
     async function fetchAds(): Promise<void> {
       try {
@@ -81,7 +96,7 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
           setCurrentIndex(0);
           setIsRendered(true);
           // Short delay so slide-up animation kicks in smoothly
-          animTimer = setTimeout(() => {
+          animTimerRef.current = setTimeout(() => {
             if (isMounted) setIsVisible(true);
           }, 200);
         }
@@ -90,15 +105,40 @@ export function AdDrawer({ targetPage, className = "" }: AdDrawerProps) {
       }
     }
 
-    void fetchAds();
+    function scheduleFetch() {
+      if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+      delayTimerRef.current = setTimeout(() => {
+        if (isMounted) {
+          void fetchAds();
+        }
+      }, delayMs);
+    }
 
-    return () => {
-      isMounted = false;
-      if (animTimer) clearTimeout(animTimer);
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-      if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
-    };
-  }, [targetPage]);
+    // Ensure the window/document has completed loading before starting the 3-second delay
+    if (typeof document !== "undefined" && document.readyState !== "complete") {
+      const handleWindowLoad = () => {
+        scheduleFetch();
+      };
+      window.addEventListener("load", handleWindowLoad, { once: true });
+      return () => {
+        isMounted = false;
+        window.removeEventListener("load", handleWindowLoad);
+        if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+        if (animTimerRef.current) clearTimeout(animTimerRef.current);
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
+      };
+    } else {
+      scheduleFetch();
+      return () => {
+        isMounted = false;
+        if (delayTimerRef.current) clearTimeout(delayTimerRef.current);
+        if (animTimerRef.current) clearTimeout(animTimerRef.current);
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        if (nextTimerRef.current) clearTimeout(nextTimerRef.current);
+      };
+    }
+  }, [targetPage, ready, delayMs]);
 
   // Handle drawer close: dismiss the closed ad for the session & show next active ad in sequence
   const handleClose = () => {

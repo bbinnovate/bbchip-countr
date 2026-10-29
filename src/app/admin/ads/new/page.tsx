@@ -20,9 +20,11 @@ import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
 import { cn } from "@/lib/utils";
 import {
+  compressImage,
   deleteUploadedMedia,
   detectMediaDimensions,
   startMediaUpload,
+  TARGET_IMAGE_SIZE_BYTES,
   validateMediaFile,
   type MediaUploadResult,
 } from "@/lib/storage-client";
@@ -72,13 +74,33 @@ export default function CreateAdPage() {
   }, [previewUrl]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const rawFile = e.target.files?.[0];
+    if (!rawFile) return;
 
-    const validation = validateMediaFile(file);
+    // Reset input value so re-selecting triggers change
+    e.target.value = "";
+
+    const validation = validateMediaFile(rawFile);
     if (!validation.valid) {
       toast.error(validation.error);
       return;
+    }
+
+    let file = rawFile;
+    if (file.type.startsWith("image/") && file.size > TARGET_IMAGE_SIZE_BYTES) {
+      const toastId = toast.loading(
+        `Compressing image (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB) to under 1 MB...`,
+      );
+      try {
+        file = await compressImage(file, TARGET_IMAGE_SIZE_BYTES);
+        toast.success(
+          `Image compressed: ${(rawFile.size / (1024 * 1024)).toFixed(1)} MB → ${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+          { id: toastId },
+        );
+      } catch (err) {
+        toast.dismiss(toastId);
+        console.warn("Failed to auto-compress image:", err);
+      }
     }
 
     if (previewUrl) {
@@ -308,7 +330,7 @@ export default function CreateAdPage() {
                 Drop your creative media here or browse
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Images (JPG, PNG, WEBP, GIF up to 10MB) or Videos (MP4, WEBM up to 50MB)
+                Images (JPG, PNG, WEBP · auto-compressed to ≤ 1MB) or Videos (MP4, WEBM up to 7MB)
               </p>
               <p className="mt-2 text-[11px] font-semibold text-primary/80">
                 Media will be previewed locally and uploaded only when you submit the form.
