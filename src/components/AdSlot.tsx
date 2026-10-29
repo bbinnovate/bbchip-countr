@@ -124,11 +124,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
           .then((data) => {
             if (!data || !isMounted) return;
             const fetched: PublicAd[] =
-              Array.isArray(data.ads) && data.ads.length > 0
-                ? data.ads
-                : data.ad
-                  ? [data.ad]
-                  : [];
+              Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
             const valid = fetched.filter((a) => a.isStatic);
             inMemoryAds.set(targetPage, valid);
             setAds(valid);
