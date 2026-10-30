@@ -9,6 +9,7 @@ const ALLOWED_TARGET_PAGES = ["/", "/settle/[id]", "/history"] as const;
 const adUpdateSchema = z.object({
   title: z.string().min(1, "Ad title is required").max(100).optional(),
   description: z.string().max(500).optional(),
+  adType: z.enum(["banner", "product", "popup"]).optional(),
   mediaType: z.enum(["image", "video"]).optional(),
   mediaUrl: z.string().url().optional(),
   storagePath: z.string().min(1).optional(),

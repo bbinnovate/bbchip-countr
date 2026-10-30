@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { authenticateAdmin } from "@/lib/auth-server";
-import { adminDb, ALLOWED_TARGET_PAGES, type MediaType } from "@/lib/firebase-admin";
+import { adminDb, ALLOWED_TARGET_PAGES, type AdType, type MediaType } from "@/lib/firebase-admin";
 
 const adCreateSchema = z.object({
   title: z.string().min(1, "Ad title is required").max(100, "Title is too long"),
   description: z.string().max(500, "Description is too long").optional(),
+  adType: z.enum(["banner", "product", "popup"]).default("banner"),
   mediaType: z.enum(["image", "video"]),
   mediaUrl: z.string().url("Valid media URL is required"),
   storagePath: z.string().min(1, "Storage path is required"),
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get("search") || undefined;
     const statusParam = searchParams.get("status");
     const mediaTypeParam = searchParams.get("mediaType");
+    const adTypeParam = searchParams.get("adType");
     const targetPageParam = searchParams.get("targetPage");
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.max(1, Math.min(100, parseInt(searchParams.get("limit") || "10", 10)));
@@ -48,6 +50,10 @@ export async function GET(req: NextRequest) {
       mediaTypeParam === "image" || mediaTypeParam === "video"
         ? (mediaTypeParam as MediaType)
         : undefined;
+    const adType =
+      adTypeParam === "banner" || adTypeParam === "product" || adTypeParam === "popup"
+        ? (adTypeParam as AdType)
+        : undefined;
     const targetPage = targetPageParam && targetPageParam !== "all" ? targetPageParam : undefined;
 
     const offset = (page - 1) * limit;
@@ -56,6 +62,7 @@ export async function GET(req: NextRequest) {
       search,
       isActive,
       mediaType,
+      adType,
       targetPage,
       limit,
       offset,
@@ -103,9 +110,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const adType =
+      data.adType ||
+      (data.isStatic ? (data.staticType === "product_card" ? "product" : "banner") : "popup");
+    const isStatic = adType !== "popup";
+    const staticType =
+      adType === "product" ? "product_card" : adType === "banner" ? "banner" : null;
+
     const newAd = await adminDb.createAd({
       title: data.title,
       description: data.description || "",
+      adType,
       mediaType: data.mediaType,
       mediaUrl: data.mediaUrl,
       storagePath: data.storagePath,
@@ -114,8 +129,8 @@ export async function POST(req: NextRequest) {
       aspectRatio: data.aspectRatio,
       targetPages: data.targetPages,
       isActive: data.isActive,
-      isStatic: data.isStatic ?? false,
-      staticType: data.isStatic ? data.staticType || "banner" : null,
+      isStatic,
+      staticType,
       startDate: data.startDate || null,
       endDate: data.endDate || null,
       clickUrl: data.clickUrl || null,

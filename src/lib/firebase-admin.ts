@@ -33,6 +33,7 @@ export type AllowedTargetPage = (typeof ALLOWED_TARGET_PAGES)[number];
 
 export type MediaType = "image" | "video";
 export type StaticAdType = "banner" | "product_card";
+export type AdType = "banner" | "product" | "popup";
 
 export interface PublicAd {
   id: string;
@@ -44,6 +45,7 @@ export interface PublicAd {
   mediaHeight?: number;
   aspectRatio?: string;
   clickUrl?: string | null;
+  adType?: AdType;
   isStatic?: boolean;
   staticType?: StaticAdType | null;
 }
@@ -60,6 +62,7 @@ export interface Ad {
   aspectRatio?: string;
   targetPages: string[];
   isActive: boolean;
+  adType?: AdType;
   isStatic?: boolean;
   staticType?: StaticAdType | null;
   startDate?: string | null;
@@ -221,6 +224,7 @@ export const adminDb = {
     search?: string;
     isActive?: boolean;
     mediaType?: MediaType;
+    adType?: AdType;
     targetPage?: string;
     limit?: number;
     offset?: number;
@@ -229,14 +233,36 @@ export const adminDb = {
     const snap = await getDocs(collection(db, ADS_COLLECTION));
     const allAds: Ad[] = snap.docs.map((d) => {
       const data = d.data();
+      const rawType = data.adType || data.type;
+      let resolvedType: AdType = "popup";
+      if (rawType === "banner" || rawType === "product" || rawType === "popup") {
+        resolvedType = rawType;
+      } else if (data.isStatic) {
+        resolvedType =
+          data.staticType === "product_card" || data.staticType === "product"
+            ? "product"
+            : "banner";
+      } else {
+        resolvedType = "popup";
+      }
+
+      const isStatic =
+        typeof data.isStatic === "boolean" ? data.isStatic : resolvedType !== "popup";
+      const staticType =
+        data.staticType === "banner" || data.staticType === "product_card"
+          ? data.staticType
+          : resolvedType === "product"
+            ? "product_card"
+            : resolvedType === "banner"
+              ? "banner"
+              : null;
+
       return {
         id: d.id,
         ...(data as Omit<Ad, "id">),
-        isStatic: typeof data.isStatic === "boolean" ? data.isStatic : false,
-        staticType:
-          data.staticType === "banner" || data.staticType === "product_card"
-            ? data.staticType
-            : null,
+        adType: resolvedType,
+        isStatic,
+        staticType,
         views: typeof data.views === "number" ? data.views : 0,
         clicks: typeof data.clicks === "number" ? data.clicks : 0,
       };
@@ -263,6 +289,10 @@ export const adminDb = {
       filtered = filtered.filter((ad) => ad.mediaType === filters.mediaType);
     }
 
+    if (filters?.adType) {
+      filtered = filtered.filter((ad) => ad.adType === filters.adType);
+    }
+
     if (filters?.targetPage) {
       filtered = filtered.filter((ad) => ad.targetPages.includes(filters.targetPage!));
     }
@@ -281,12 +311,33 @@ export const adminDb = {
     const snap = await getDoc(ref);
     if (!snap.exists()) return null;
     const data = snap.data();
+    const rawType = data.adType || data.type;
+    let resolvedType: AdType = "popup";
+    if (rawType === "banner" || rawType === "product" || rawType === "popup") {
+      resolvedType = rawType;
+    } else if (data.isStatic) {
+      resolvedType =
+        data.staticType === "product_card" || data.staticType === "product" ? "product" : "banner";
+    } else {
+      resolvedType = "popup";
+    }
+
+    const isStatic = typeof data.isStatic === "boolean" ? data.isStatic : resolvedType !== "popup";
+    const staticType =
+      data.staticType === "banner" || data.staticType === "product_card"
+        ? data.staticType
+        : resolvedType === "product"
+          ? "product_card"
+          : resolvedType === "banner"
+            ? "banner"
+            : null;
+
     return {
       id: snap.id,
       ...(data as Omit<Ad, "id">),
-      isStatic: typeof data.isStatic === "boolean" ? data.isStatic : false,
-      staticType:
-        data.staticType === "banner" || data.staticType === "product_card" ? data.staticType : null,
+      adType: resolvedType,
+      isStatic,
+      staticType,
       views: typeof data.views === "number" ? data.views : 0,
       clicks: typeof data.clicks === "number" ? data.clicks : 0,
     };
@@ -296,12 +347,21 @@ export const adminDb = {
     await ensureAuth();
     const id = `ad_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
+
+    const adType: AdType =
+      adData.adType ||
+      (adData.isStatic ? (adData.staticType === "product_card" ? "product" : "banner") : "popup");
+    const isStatic = adType !== "popup";
+    const staticType =
+      adType === "product" ? "product_card" : adType === "banner" ? "banner" : null;
+
     const newAd: Ad = {
       views: 0,
       clicks: 0,
-      isStatic: false,
-      staticType: null,
       ...adData,
+      adType,
+      isStatic,
+      staticType,
       id,
       createdAt: now,
       updatedAt: now,
@@ -317,8 +377,20 @@ export const adminDb = {
   async updateAd(id: string, updates: Partial<Ad>): Promise<Ad | null> {
     await ensureAuth();
     const now = new Date().toISOString();
+
+    const cleanUpdates = { ...updates };
+    if (cleanUpdates.adType) {
+      cleanUpdates.isStatic = cleanUpdates.adType !== "popup";
+      cleanUpdates.staticType =
+        cleanUpdates.adType === "product"
+          ? "product_card"
+          : cleanUpdates.adType === "banner"
+            ? "banner"
+            : null;
+    }
+
     const ref = doc(db, ADS_COLLECTION, id);
-    await updateDoc(ref, stripUndefined({ ...updates, updatedAt: now }));
+    await updateDoc(ref, stripUndefined({ ...cleanUpdates, updatedAt: now }));
     return this.getAdById(id);
   },
 
@@ -421,6 +493,7 @@ export const adminDb = {
     maxCount: number = 3,
     excludeIds: string[] = [],
     filters?: {
+      adType?: AdType;
       isStatic?: boolean;
       staticType?: StaticAdType;
     },
@@ -436,6 +509,11 @@ export const adminDb = {
       // Strict mediaUrl check: if mediaUrl is missing or empty (e.g. manually emptied in database)
       if (!ad.mediaUrl || typeof ad.mediaUrl !== "string" || !ad.mediaUrl.trim()) {
         return false;
+      }
+
+      // Filter by adType if specified
+      if (filters?.adType) {
+        if (ad.adType !== filters.adType) return false;
       }
 
       // Filter by isStatic if specified
@@ -511,7 +589,8 @@ export const adminDb = {
           mediaHeight: ad.mediaHeight,
           aspectRatio: ad.aspectRatio,
           clickUrl: ad.clickUrl || null,
-          isStatic: ad.isStatic ?? false,
+          adType: ad.adType,
+          isStatic: ad.isStatic ?? ad.adType !== "popup",
           staticType: ad.staticType || null,
         });
       }

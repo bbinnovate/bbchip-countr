@@ -8,15 +8,18 @@ import {
   ArrowLeft,
   Calendar,
   Check,
+  ExternalLink,
   Eye,
   Film,
   Image as ImageIcon,
   Link as LinkIcon,
   Loader2,
   MousePointerClick,
+  Sparkles,
   Trash2,
   TrendingUp,
   UploadCloud,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { UploadTask } from "firebase/storage";
@@ -30,7 +33,7 @@ import {
   validateMediaFile,
   type MediaUploadResult,
 } from "@/lib/storage-client";
-import type { Ad } from "@/lib/firebase-admin";
+import type { Ad, AdType } from "@/lib/firebase-admin";
 
 const TARGET_PAGE_OPTIONS = [
   { id: "/", label: "Home Page", path: "/" },
@@ -46,12 +49,11 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
   const [ad, setAd] = useState<Ad | null>(null);
 
   // Form State
+  const [adType, setAdType] = useState<AdType>("banner");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [targetPages, setTargetPages] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(true);
-  const [isStatic, setIsStatic] = useState(false);
-  const [staticType, setStaticType] = useState<"banner" | "product_card">("banner");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [clickUrl, setClickUrl] = useState("");
@@ -101,8 +103,10 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
         setDescription(item.description || "");
         setTargetPages(item.targetPages || []);
         setIsActive(item.isActive);
-        setIsStatic(item.isStatic ?? false);
-        setStaticType(item.staticType || "banner");
+        setAdType(
+          item.adType ||
+            (item.isStatic ? (item.staticType === "product_card" ? "product" : "banner") : "popup"),
+        );
         setCurrentMediaUrl(item.mediaUrl);
         setCurrentStoragePath(item.storagePath);
         setMediaType(item.mediaType);
@@ -254,6 +258,7 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
       const payload = {
         title: title.trim(),
         description: description.trim() || undefined,
+        adType,
         mediaType: finalMediaType,
         mediaUrl: finalMediaUrl,
         storagePath: finalStoragePath,
@@ -262,8 +267,8 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
         aspectRatio: finalAspectRatio,
         targetPages,
         isActive,
-        isStatic,
-        staticType: isStatic ? staticType : null,
+        isStatic: adType !== "popup",
+        staticType: adType === "product" ? "product_card" : adType === "banner" ? "banner" : null,
         startDate: startDate ? new Date(startDate).toISOString() : null,
         endDate: endDate ? new Date(endDate).toISOString() : null,
         clickUrl: clickUrl.trim() || null,
@@ -315,6 +320,9 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
       setUploadTask(null);
     }
   };
+
+  const activeMediaUrl = replacementPreviewUrl || currentMediaUrl;
+  const activeMediaType = replacementFile ? replacementMediaType : mediaType;
 
   if (loading) {
     return (
@@ -391,8 +399,114 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
 
       {/* Main Edit Form */}
       <form onSubmit={handleSubmit} className="surface metallic space-y-6 p-6 sm:p-8">
+        {/* 1. Ads Type Radio Selection */}
+        <div>
+          <label className="mb-1 block text-xs font-bold tracking-wider text-muted-foreground uppercase">
+            Ads Type <span className="text-primary">*</span>
+          </label>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Select the ad placement format. Banner & Product ads appear in page ad slots; Popup ads
+            appear in the bottom drawer.
+          </p>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {/* Banner Option */}
+            <label
+              className={cn(
+                "relative flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition-all duration-200",
+                adType === "banner"
+                  ? "border-primary bg-primary/10 shadow-sm"
+                  : "border-border bg-secondary/50 text-muted-foreground hover:border-primary/40 hover:bg-secondary",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="radio"
+                    name="adType"
+                    value="banner"
+                    checked={adType === "banner"}
+                    onChange={() => setAdType("banner")}
+                    className="h-4 w-4 accent-primary cursor-pointer"
+                  />
+                  <span className="text-sm font-bold text-foreground">Banner</span>
+                </div>
+                <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
+                  3:1
+                </span>
+              </div>
+              <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                Wide header/inline banner displayed in{" "}
+                <strong className="text-foreground">AdSlot</strong>. Ideal for 1200×400px creatives.
+              </p>
+            </label>
+
+            {/* Product Option */}
+            <label
+              className={cn(
+                "relative flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition-all duration-200",
+                adType === "product"
+                  ? "border-primary bg-primary/10 shadow-sm"
+                  : "border-border bg-secondary/50 text-muted-foreground hover:border-primary/40 hover:bg-secondary",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="radio"
+                    name="adType"
+                    value="product"
+                    checked={adType === "product"}
+                    onChange={() => setAdType("product")}
+                    className="h-4 w-4 accent-primary cursor-pointer"
+                  />
+                  <span className="text-sm font-bold text-foreground">Product</span>
+                </div>
+                <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
+                  1:1
+                </span>
+              </div>
+              <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                Square featured deal card in <strong className="text-foreground">AdSlot</strong>.
+                Ideal for 600×600px product & deal showcases.
+              </p>
+            </label>
+
+            {/* Popup Option */}
+            <label
+              className={cn(
+                "relative flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition-all duration-200",
+                adType === "popup"
+                  ? "border-primary bg-primary/10 shadow-sm"
+                  : "border-border bg-secondary/50 text-muted-foreground hover:border-primary/40 hover:bg-secondary",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="radio"
+                    name="adType"
+                    value="popup"
+                    checked={adType === "popup"}
+                    onChange={() => setAdType("popup")}
+                    className="h-4 w-4 accent-primary cursor-pointer"
+                  />
+                  <span className="text-sm font-bold text-foreground">Popup</span>
+                </div>
+                <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-extrabold text-primary uppercase">
+                  Drawer
+                </span>
+              </div>
+              <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                Slide-up floating drawer in <strong className="text-foreground">AdDrawer</strong>{" "}
+                with backdrop and dismiss control.
+              </p>
+            </label>
+          </div>
+        </div>
+
         {/* Title & Description */}
-        <div className="space-y-4">
+        <div className="space-y-4 border-t border-border pt-6">
           <div>
             <label
               htmlFor="title"
@@ -497,54 +611,6 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
                 )}
               </div>
 
-              {/* Live Crop Preview for Static Ads */}
-              {isStatic && (
-                <div className="mt-4 border-t border-border/60 pt-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-foreground">
-                      {staticType === "banner"
-                        ? "📐 3:1 Banner Crop Preview"
-                        : "📐 1:1 Product Card Crop Preview"}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      Auto-cropped with object-cover
-                    </span>
-                  </div>
-
-                  <div
-                    className={cn(
-                      "relative overflow-hidden rounded-lg border border-primary/30 bg-black",
-                      staticType === "banner"
-                        ? "w-full max-w-md aspect-[3/1]"
-                        : "w-32 aspect-square",
-                    )}
-                  >
-                    {replacementMediaType === "image" ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={replacementPreviewUrl}
-                        alt="Crop Preview"
-                        className="h-full w-full object-cover object-center"
-                      />
-                    ) : (
-                      <video
-                        src={replacementPreviewUrl}
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                        className="h-full w-full object-cover object-center"
-                      />
-                    )}
-                  </div>
-                  <p className="mt-1.5 text-[10px] text-muted-foreground">
-                    {staticType === "banner"
-                      ? "Recommended upload size: 1200×400px (3:1 ratio). Other sizes are automatically centered and cropped to fit."
-                      : "Recommended upload size: 600×600px (1:1 ratio). Other sizes are automatically centered and cropped to fit."}
-                  </p>
-                </div>
-              )}
-
               {submitting && uploadProgress !== null && (
                 <div className="mt-4 border-t border-border pt-3">
                   <div className="flex items-center justify-between text-xs font-bold">
@@ -624,52 +690,164 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
                   />
                 </div>
               </div>
+            </div>
+          )}
 
-              {/* Live Crop Preview for Static Ads */}
-              {isStatic && (
-                <div className="mt-4 border-t border-border/60 pt-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-foreground">
-                      {staticType === "banner"
-                        ? "📐 3:1 Banner Crop Preview (App Display)"
-                        : "📐 1:1 Product Card Crop Preview (App Display)"}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      Auto-cropped with object-cover
-                    </span>
-                  </div>
+          {/* REALISTIC LIVE PREVIEW ACCORDING TO SELECTED AD TYPE */}
+          {activeMediaUrl && (
+            <div className="mt-4 rounded-xl border border-border bg-secondary/30 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <span>
+                    Live Realistic Preview (
+                    {adType === "banner"
+                      ? "3:1 Banner"
+                      : adType === "product"
+                        ? "1:1 Product Card"
+                        : "AdDrawer Popup"}
+                    )
+                  </span>
+                </div>
+                <span className="text-[10px] text-muted-foreground">
+                  Shows exactly how users will see this ad
+                </span>
+              </div>
 
-                  <div
-                    className={cn(
-                      "relative overflow-hidden rounded-lg border border-primary/30 bg-black",
-                      staticType === "banner"
-                        ? "w-full max-w-md aspect-[3/1]"
-                        : "w-32 aspect-square",
-                    )}
-                  >
-                    {mediaType === "image" ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={currentMediaUrl}
-                        alt="Crop Preview"
-                        className="h-full w-full object-cover object-center"
-                      />
-                    ) : (
+              {/* Banner 3:1 Preview */}
+              {adType === "banner" && (
+                <div className="w-full overflow-hidden rounded-xl border border-primary/25 bg-card shadow-lg transition">
+                  <div className="relative aspect-[3/1] w-full overflow-hidden bg-black/40">
+                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/80 px-1.5 py-0.5 text-[7px] uppercase tracking-widest text-primary backdrop-blur-sm">
+                      <Sparkles className="h-1.5 w-1.5 animate-pulse" />
+                      <span>Sponsored</span>
+                    </div>
+                    {activeMediaType === "video" ? (
                       <video
-                        src={currentMediaUrl}
+                        src={activeMediaUrl}
                         autoPlay
                         loop
                         muted
                         playsInline
                         className="h-full w-full object-cover object-center"
                       />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={activeMediaUrl}
+                        alt="Banner Preview"
+                        className="h-full w-full object-cover object-center"
+                      />
                     )}
                   </div>
-                  <p className="mt-1.5 text-[10px] text-muted-foreground">
-                    {staticType === "banner"
-                      ? "Target size: 3:1 banner (e.g. 1200×400px). Active image is automatically centered and cropped to fit."
-                      : "Target size: 1:1 square (e.g. 600×600px). Active image is automatically centered and cropped to fit."}
-                  </p>
+                  <div className="flex items-center justify-between gap-3 bg-secondary/40 p-2.5 sm:px-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-foreground">
+                        {title || "Diwali Poker Night Sponsor Banner"}
+                      </p>
+                      {description && (
+                        <p className="truncate text-[10px] text-muted-foreground">{description}</p>
+                      )}
+                    </div>
+                    <span className="btn-gold flex shrink-0 items-center gap-1 px-2.5 py-1 text-[10px] font-extrabold tracking-wider">
+                      <span>Learn More</span>
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Product 1:1 Preview */}
+              {adType === "product" && (
+                <div className="max-w-[220px] mx-auto overflow-hidden rounded-xl border border-primary/25 bg-card shadow-lg transition">
+                  <div className="relative aspect-square w-full overflow-hidden bg-black/40">
+                    <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary backdrop-blur-sm">
+                      <Sparkles className="h-2.5 w-2.5 animate-pulse" />
+                      <span>Featured</span>
+                    </div>
+                    {activeMediaType === "video" ? (
+                      <video
+                        src={activeMediaUrl}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="h-full w-full object-cover object-center"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={activeMediaUrl}
+                        alt="Product Preview"
+                        className="h-full w-full object-cover object-center"
+                      />
+                    )}
+                  </div>
+                  <div className="p-3">
+                    <h4 className="truncate text-xs font-bold text-foreground">
+                      {title || "Featured Product Name"}
+                    </h4>
+                    {description && (
+                      <p className="line-clamp-2 mt-0.5 text-[10px] text-muted-foreground">
+                        {description}
+                      </p>
+                    )}
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border/50 pt-2 text-[10px] font-bold text-primary">
+                      <span>View Deal</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Popup (AdDrawer) Preview */}
+              {adType === "popup" && (
+                <div className="max-w-md mx-auto surface metallic shadow-2xl overflow-hidden rounded-2xl border border-primary/30 bg-card/95 backdrop-blur-md">
+                  <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-primary to-transparent opacity-80" />
+                  <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/50 bg-secondary/30">
+                    <div className="flex items-center gap-1.5 text-[7px] tracking-[0.2em] text-primary uppercase">
+                      <Sparkles className="h-1.5 w-1.5 animate-pulse" />
+                      <span>Sponsored</span>
+                    </div>
+                    <div className="p-1 rounded-md text-muted-foreground">
+                      <X className="h-4 w-4" />
+                    </div>
+                  </div>
+                  <div className="relative w-full aspect-video max-h-52 bg-black/40 overflow-hidden flex items-center justify-center">
+                    {activeMediaType === "video" ? (
+                      <video
+                        src={activeMediaUrl}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={activeMediaUrl}
+                        alt="Popup Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="p-3.5 flex items-center justify-between gap-3 bg-card">
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-bold text-sm text-foreground truncate">
+                        {title || "Special Tournament Announcement"}
+                      </h4>
+                      {description && (
+                        <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                          {description}
+                        </p>
+                      )}
+                    </div>
+                    <span className="btn-gold flex items-center gap-1 px-3 py-1.5 text-xs font-bold shrink-0">
+                      <span>Visit</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -777,124 +955,12 @@ export default function EditAdPage({ params }: { params: Promise<{ id: string }>
           </div>
         </div>
 
-        {/* Static Ad Radio Option */}
-        <div className="border-t border-border pt-6">
-          <label className="mb-1 block text-xs font-bold tracking-wider text-muted-foreground uppercase">
-            Static Ad?
-          </label>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Specify whether this creative is a static advertisement.
-          </p>
-
-          <div className="grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
-            <label
-              className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
-                isStatic
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
-              }`}
-            >
-              <input
-                type="radio"
-                name="isStatic"
-                checked={isStatic === true}
-                onChange={() => setIsStatic(true)}
-                className="h-4 w-4 accent-primary"
-              />
-              <div>
-                <p className="text-xs font-bold text-foreground">True</p>
-                <p className="text-[10px] text-muted-foreground">Static creative</p>
-              </div>
-            </label>
-
-            <label
-              className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
-                !isStatic
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
-              }`}
-            >
-              <input
-                type="radio"
-                name="isStatic"
-                checked={isStatic === false}
-                onChange={() => setIsStatic(false)}
-                className="h-4 w-4 accent-primary"
-              />
-              <div>
-                <p className="text-xs font-bold text-foreground">False</p>
-                <p className="text-[10px] text-muted-foreground">Regular / rotating ad</p>
-              </div>
-            </label>
-          </div>
-
-          {/* Conditional Static Ad Type Options (shown only if isStatic is true) */}
-          {isStatic && (
-            <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
-              <label className="mb-1 block text-xs font-bold tracking-wider text-muted-foreground uppercase">
-                Static Ad Type <span className="text-primary">*</span>
-              </label>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Select whether this static ad is formatted as a Banner or Product Cards.
-              </p>
-
-              <div className="grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
-                <label
-                  className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
-                    staticType === "banner"
-                      ? "border-primary bg-primary/20 text-foreground shadow-sm"
-                      : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="staticType"
-                    value="banner"
-                    checked={staticType === "banner"}
-                    onChange={() => setStaticType("banner")}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <div>
-                    <p className="text-xs font-bold text-foreground">Banner</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      3:1 Ratio (e.g. 1200×400px) · Cropped
-                    </p>
-                  </div>
-                </label>
-
-                <label
-                  className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition ${
-                    staticType === "product_card"
-                      ? "border-primary bg-primary/20 text-foreground shadow-sm"
-                      : "border-border bg-secondary text-muted-foreground hover:bg-secondary/70"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="staticType"
-                    value="product_card"
-                    checked={staticType === "product_card"}
-                    onChange={() => setStaticType("product_card")}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <div>
-                    <p className="text-xs font-bold text-foreground">Product Cards</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      1:1 Square (e.g. 600×600px) · Cropped
-                    </p>
-                  </div>
-                </label>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Active Toggle Switch */}
         <div className="flex items-center justify-between border-t border-border pt-6">
           <div>
             <p className="text-xs font-bold text-foreground">Active Status</p>
             <p className="text-[11px] text-muted-foreground">
-              Controls whether this ad is delivered in the bottom drawer.
+              Controls whether this ad is served to users across configured target pages.
             </p>
           </div>
 

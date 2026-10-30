@@ -322,11 +322,25 @@ export default function AdminDashboardPage() {
                         <span className="rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground uppercase">
                           {ad.mediaType}
                         </span>
-                        {ad.isStatic && (
-                          <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
-                            Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
-                          </span>
-                        )}
+                        {/* Ad Type Badge */}
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase border ${
+                            ad.adType === "banner" ||
+                            (!ad.adType && ad.isStatic && ad.staticType === "banner")
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                              : ad.adType === "product" ||
+                                  (!ad.adType && ad.isStatic && ad.staticType === "product_card")
+                                ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
+                                : "border-purple-500/40 bg-purple-500/10 text-purple-400"
+                          }`}
+                        >
+                          {ad.adType?.toUpperCase() ||
+                            (ad.isStatic
+                              ? ad.staticType === "product_card"
+                                ? "PRODUCT"
+                                : "BANNER"
+                              : "POPUP")}
+                        </span>
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] font-bold text-foreground">
@@ -489,11 +503,25 @@ export default function AdminDashboardPage() {
                       <span className="rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground uppercase">
                         {ad.mediaType}
                       </span>
-                      {ad.isStatic && (
-                        <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
-                          Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
-                        </span>
-                      )}
+                      {/* Ad Type Badge */}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase border ${
+                          ad.adType === "banner" ||
+                          (!ad.adType && ad.isStatic && ad.staticType === "banner")
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                            : ad.adType === "product" ||
+                                (!ad.adType && ad.isStatic && ad.staticType === "product_card")
+                              ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
+                              : "border-purple-500/40 bg-purple-500/10 text-purple-400"
+                        }`}
+                      >
+                        {ad.adType?.toUpperCase() ||
+                          (ad.isStatic
+                            ? ad.staticType === "product_card"
+                              ? "PRODUCT"
+                              : "BANNER"
+                            : "POPUP")}
+                      </span>
                     </div>
 
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

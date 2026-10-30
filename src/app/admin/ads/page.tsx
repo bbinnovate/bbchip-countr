@@ -38,6 +38,7 @@ export default function AdminAdsListPage() {
   const [status, setStatus] = useState("all");
   const [mediaType, setMediaType] = useState("all");
   const [targetPage, setTargetPage] = useState("all");
+  const [adTypeFilter, setAdTypeFilter] = useState("all");
 
   // Deletion modal state
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function AdminAdsListPage() {
       if (status !== "all") params.set("status", status);
       if (mediaType !== "all") params.set("mediaType", mediaType);
       if (targetPage !== "all") params.set("targetPage", targetPage);
+      if (adTypeFilter !== "all") params.set("adType", adTypeFilter);
       params.set("page", targetPageNum.toString());
       params.set("limit", "10");
 
@@ -73,7 +75,7 @@ export default function AdminAdsListPage() {
   useEffect(() => {
     fetchAds(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, mediaType, targetPage]);
+  }, [status, mediaType, targetPage, adTypeFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,7 +169,7 @@ export default function AdminAdsListPage() {
       <div className="surface p-4">
         <form
           onSubmit={handleSearchSubmit}
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6"
         >
           {/* Search box */}
           <div className="relative lg:col-span-2">
@@ -179,6 +181,20 @@ export default function AdminAdsListPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-lg border border-border bg-secondary py-2 pr-4 pl-9 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
             />
+          </div>
+
+          {/* Ad Type filter */}
+          <div>
+            <select
+              value={adTypeFilter}
+              onChange={(e) => setAdTypeFilter(e.target.value)}
+              className="w-full rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+            >
+              <option value="all">All Ad Types</option>
+              <option value="banner">Banner (3:1)</option>
+              <option value="product">Product (1:1)</option>
+              <option value="popup">Popup (AdDrawer)</option>
+            </select>
           </div>
 
           {/* Status filter */}
@@ -252,6 +268,7 @@ export default function AdminAdsListPage() {
                 setStatus("all");
                 setMediaType("all");
                 setTargetPage("all");
+                setAdTypeFilter("all");
                 fetchAds(1);
               }}
               className="btn-ghost mt-4 px-3 py-1.5 text-xs font-bold"
@@ -303,11 +320,25 @@ export default function AdminAdsListPage() {
                             {ad.aspectRatio}
                           </span>
                         )}
-                        {ad.isStatic && (
-                          <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-extrabold text-primary uppercase">
-                            Static{ad.staticType === "product_card" ? " · Cards" : " · Banner"}
-                          </span>
-                        )}
+                        {/* Ad Type Badge */}
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase border ${
+                            ad.adType === "banner" ||
+                            (!ad.adType && ad.isStatic && ad.staticType === "banner")
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                              : ad.adType === "product" ||
+                                  (!ad.adType && ad.isStatic && ad.staticType === "product_card")
+                                ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
+                                : "border-purple-500/40 bg-purple-500/10 text-purple-400"
+                          }`}
+                        >
+                          {ad.adType?.toUpperCase() ||
+                            (ad.isStatic
+                              ? ad.staticType === "product_card"
+                                ? "PRODUCT"
+                                : "BANNER"
+                              : "POPUP")}
+                        </span>
                       </div>
 
                       {ad.description && (

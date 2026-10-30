@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { ExternalLink, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PublicAd, StaticAdType } from "@/lib/firebase-admin";
+import type { AdType, PublicAd, StaticAdType } from "@/lib/firebase-admin";
 import { isMediaKnownBroken, markMediaUrlFailed, verifyMediaAccessible } from "@/lib/media-verify";
 
 type Props = {
@@ -73,11 +73,18 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
         for (const docSnap of snapshot.docs) {
           const data = docSnap.data();
           const isActive = data.isActive === true;
-          const isStatic = data.isStatic === true;
           const targetPages: string[] = Array.isArray(data.targetPages) ? data.targetPages : [];
 
-          if (!isActive || !isStatic) continue;
+          if (!isActive) continue;
           if (!targetPages.includes(targetPage)) continue;
+
+          // Check adType: banner and product belong in AdSlot. Popup belongs in AdDrawer.
+          const rawType = data.adType as AdType | undefined;
+          const isStaticLegacy = data.isStatic === true;
+          const isEligible =
+            rawType === "banner" || rawType === "product" || (!rawType && isStaticLegacy);
+
+          if (!isEligible) continue;
 
           // 1. Strict check: mediaUrl must not be empty or whitespace (if cleared in database, skip)
           const rawMediaUrl = typeof data.mediaUrl === "string" ? data.mediaUrl.trim() : "";
@@ -94,6 +101,13 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
             if (!isNaN(end) && now > end) continue;
           }
 
+          const resolvedType: AdType =
+            rawType === "banner" || rawType === "product"
+              ? rawType
+              : data.staticType === "product_card"
+                ? "product"
+                : "banner";
+
           candidateAds.push({
             id: docSnap.id,
             title: String(data.title || ""),
@@ -104,11 +118,9 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
             mediaHeight: typeof data.mediaHeight === "number" ? data.mediaHeight : undefined,
             aspectRatio: data.aspectRatio ? String(data.aspectRatio) : undefined,
             clickUrl: data.clickUrl ? String(data.clickUrl) : null,
+            adType: resolvedType,
             isStatic: true,
-            staticType:
-              data.staticType === "banner" || data.staticType === "product_card"
-                ? data.staticType
-                : "banner",
+            staticType: resolvedType === "product" ? "product_card" : "banner",
             createdAt: typeof data.createdAt === "string" ? data.createdAt : undefined,
           });
         }
@@ -152,7 +164,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
               Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
             const valid = fetched.filter(
               (a) =>
-                a.isStatic &&
+                (a.adType === "banner" || a.adType === "product" || (!a.adType && a.isStatic)) &&
                 typeof a.mediaUrl === "string" &&
                 a.mediaUrl.trim().length > 0 &&
                 !isMediaKnownBroken(a.mediaUrl),
@@ -228,8 +240,13 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
     return null;
   }
 
-  const bannerAds = displayAds.filter((ad) => !ad.staticType || ad.staticType === "banner");
-  const productAds = displayAds.filter((ad) => ad.staticType === "product_card");
+  const bannerAds = displayAds.filter(
+    (ad) =>
+      ad.adType === "banner" || (!ad.adType && (!ad.staticType || ad.staticType === "banner")),
+  );
+  const productAds = displayAds.filter(
+    (ad) => ad.adType === "product" || (!ad.adType && ad.staticType === "product_card"),
+  );
 
   let displayBanners = bannerAds;
   let displayProducts = productAds;
@@ -251,32 +268,354 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
       data-ad-type={type}
       className={cn("mb-6 space-y-3", className)}
     >
-      {displayBanners.map((ad) => (
-        <StaticBannerCard
-          key={ad.id}
-          ad={ad}
+      {displayBanners.length > 0 && (
+        <BannerCarousel
+          ads={displayBanners}
           onAdClick={handleAdClick}
           onMediaError={handleMediaError}
         />
-      ))}
+      )}
       {displayProducts.length > 0 && (
-        <div
-          className={cn(
-            "grid gap-3",
-            displayProducts.length === 1 ? "max-w-xs mx-auto w-full" : "grid-cols-2",
-          )}
-        >
-          {displayProducts.slice(0, count).map((ad) => (
-            <StaticProductCard
-              key={ad.id}
-              ad={ad}
-              onAdClick={handleAdClick}
-              onMediaError={handleMediaError}
-            />
-          ))}
-        </div>
+        <ProductCarousel
+          ads={displayProducts}
+          onAdClick={handleAdClick}
+          onMediaError={handleMediaError}
+        />
       )}
     </aside>
+  );
+}
+
+/**
+ * Reliable Video Player for Static / Banner Ads
+ * Forces muted, loop, playsInline and triggers programmatic .play() with IntersectionObserver.
+ */
+function StaticAdVideo({
+  src,
+  className,
+  onError,
+}: {
+  src: string;
+  className?: string;
+  onError?: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    el.defaultMuted = true;
+    el.muted = true;
+
+    const playVideo = () => {
+      const p = el.play();
+      if (p !== undefined) {
+        p.catch(() => {
+          // Autoplay policy prevented playback until user interaction
+        });
+      }
+    };
+
+    playVideo();
+
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              playVideo();
+            } else {
+              el.pause();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      observer.observe(el);
+    }
+
+    return () => {
+      if (observer) observer.disconnect();
+    };
+  }, [src]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      autoPlay
+      loop
+      muted
+      playsInline
+      onError={onError}
+      className={className}
+    />
+  );
+}
+
+/**
+ * Auto-rotating Carousel for Banner Ads (5s timeout cycle, hover pause, controls, dots)
+ */
+function BannerCarousel({
+  ads,
+  onAdClick,
+  onMediaError,
+}: {
+  ads: PublicAd[];
+  onAdClick: (id: string) => void;
+  onMediaError: (id: string, mediaUrl: string) => void;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Auto-advance every 5 seconds (5000ms)
+  useEffect(() => {
+    if (ads.length <= 1 || isPaused) return;
+
+    const interval = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % ads.length);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [ads.length, isPaused]);
+
+  // Keep index within bounds if ads list changes
+  useEffect(() => {
+    if (currentIndex >= ads.length) {
+      setCurrentIndex(0);
+    }
+  }, [ads.length, currentIndex]);
+
+  // Track impression for active carousel slide
+  useEffect(() => {
+    const activeAd = ads[currentIndex];
+    if (activeAd && !trackedViewsGlobal.has(activeAd.id)) {
+      trackedViewsGlobal.add(activeAd.id);
+      void fetch("/api/ads/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adId: activeAd.id, event: "view" }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, [ads, currentIndex]);
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev - 1 + ads.length) % ads.length);
+  };
+
+  const handleNext = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev + 1) % ads.length);
+  };
+
+  const currentAd = ads[currentIndex];
+  if (!currentAd) return null;
+
+  return (
+    <div
+      className="relative w-full group"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onTouchStart={() => setIsPaused(true)}
+      onTouchEnd={() => setIsPaused(false)}
+    >
+      <StaticBannerCard
+        key={currentAd.id}
+        ad={currentAd}
+        onAdClick={onAdClick}
+        onMediaError={onMediaError}
+      />
+
+      {/* Carousel Navigation Controls (when multiple ads exist) */}
+      {ads.length > 1 && (
+        <>
+          {/* Subtle Slide Counter */}
+          <div className="absolute top-2 right-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-mono font-bold text-muted-foreground backdrop-blur-sm">
+            {currentIndex + 1} / {ads.length}
+          </div>
+
+          {/* Prev Button */}
+          {/* <button
+            type="button"
+            onClick={handlePrev}
+            aria-label="Previous advertisement"
+            className="absolute left-2 top-1/2 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button> */}
+
+          {/* Next Button */}
+          {/* <button
+            type="button"
+            onClick={handleNext}
+            aria-label="Next advertisement"
+            className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button> */}
+
+          {/* Indicators Bar with Dots */}
+          <div className="mt-2 flex items-center justify-center gap-1.5">
+            {ads.map((ad, idx) => (
+              <button
+                key={ad.id}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCurrentIndex(idx);
+                }}
+                aria-label={`Go to ad ${idx + 1}`}
+                className={cn(
+                  "h-1.5 rounded-full transition-all duration-300",
+                  idx === currentIndex
+                    ? "w-6 bg-primary"
+                    : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/60",
+                )}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Auto-rotating Carousel for Product Ads (5s timeout cycle, hover pause, controls, dots)
+ */
+function ProductCarousel({
+  ads,
+  onAdClick,
+  onMediaError,
+}: {
+  ads: PublicAd[];
+  onAdClick: (id: string) => void;
+  onMediaError: (id: string, mediaUrl: string) => void;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Auto-advance every 5 seconds (5000ms)
+  useEffect(() => {
+    if (ads.length <= 1 || isPaused) return;
+
+    const interval = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % ads.length);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [ads.length, isPaused]);
+
+  // Keep index within bounds if ads list changes
+  useEffect(() => {
+    if (currentIndex >= ads.length) {
+      setCurrentIndex(0);
+    }
+  }, [ads.length, currentIndex]);
+
+  // Track impression for active carousel slide
+  useEffect(() => {
+    const activeAd = ads[currentIndex];
+    if (activeAd && !trackedViewsGlobal.has(activeAd.id)) {
+      trackedViewsGlobal.add(activeAd.id);
+      void fetch("/api/ads/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adId: activeAd.id, event: "view" }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, [ads, currentIndex]);
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev - 1 + ads.length) % ads.length);
+  };
+
+  const handleNext = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev + 1) % ads.length);
+  };
+
+  const currentAd = ads[currentIndex];
+  if (!currentAd) return null;
+
+  return (
+    <div
+      className="relative max-w-xs mx-auto w-full group"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onTouchStart={() => setIsPaused(true)}
+      onTouchEnd={() => setIsPaused(false)}
+    >
+      <StaticProductCard
+        key={currentAd.id}
+        ad={currentAd}
+        onAdClick={onAdClick}
+        onMediaError={onMediaError}
+      />
+
+      {/* Carousel Navigation Controls (when multiple product ads exist) */}
+      {ads.length > 1 && (
+        <>
+          {/* Subtle Slide Counter */}
+          <div className="absolute top-2 right-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-mono font-bold text-muted-foreground backdrop-blur-sm">
+            {currentIndex + 1} / {ads.length}
+          </div>
+
+          {/* Prev Button */}
+          <button
+            type="button"
+            onClick={handlePrev}
+            aria-label="Previous product advertisement"
+            className="absolute left-2 top-1/3 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+
+          {/* Next Button */}
+          <button
+            type="button"
+            onClick={handleNext}
+            aria-label="Next product advertisement"
+            className="absolute right-2 top-1/3 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+
+          {/* Indicators Bar with Dots */}
+          <div className="mt-2 flex items-center justify-center gap-1.5">
+            {ads.map((ad, idx) => (
+              <button
+                key={ad.id}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCurrentIndex(idx);
+                }}
+                aria-label={`Go to product ${idx + 1}`}
+                className={cn(
+                  "h-1.5 rounded-full transition-all duration-300",
+                  idx === currentIndex
+                    ? "w-6 bg-primary"
+                    : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/60",
+                )}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -293,10 +632,10 @@ function StaticBannerCard({
   const aspectClass = ad.aspectRatio === "16:9" ? "aspect-video" : "aspect-[3/1]";
 
   const content = (
-    <div className="group relative w-full overflow-hidden rounded-xl border border-primary/20 bg-card shadow-md transition hover:border-primary/40">
+    <div className="group/card relative w-full overflow-hidden rounded-xl border border-primary/20 bg-card shadow-md transition hover:border-primary/40">
       {/* Top subtle sponsored tag */}
-      <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary backdrop-blur-sm">
-        <Sparkles className="h-2.5 w-2.5 animate-pulse" />
+      <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[7px] uppercase tracking-widest text-primary backdrop-blur-sm">
+        <Sparkles className="h-1.5 w-1.5 animate-pulse" />
         <span>Sponsored</span>
       </div>
 
@@ -308,12 +647,8 @@ function StaticBannerCard({
         )}
       >
         {ad.mediaType === "video" ? (
-          <video
+          <StaticAdVideo
             src={ad.mediaUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
             onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center"
           />
@@ -324,7 +659,7 @@ function StaticBannerCard({
             alt={ad.title}
             loading="lazy"
             onError={() => onMediaError(ad.id, ad.mediaUrl)}
-            className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.01]"
+            className="h-full w-full object-cover object-center transition-transform duration-300 group-hover/card:scale-[1.01]"
           />
         )}
       </div>
@@ -375,22 +710,18 @@ function StaticProductCard({
   onMediaError: (id: string, mediaUrl: string) => void;
 }) {
   const cardContent = (
-    <div className="group relative flex h-full flex-col overflow-hidden rounded-xl border border-primary/20 bg-card shadow-md transition hover:border-primary/40">
+    <div className="group/card relative flex h-full flex-col overflow-hidden rounded-xl border border-primary/20 bg-card shadow-md transition hover:border-primary/40">
       {/* Top Sponsored tag */}
-      <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest text-primary backdrop-blur-sm">
-        <Sparkles className="h-2.5 w-2.5 animate-pulse" />
+      <div className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[7px] uppercase tracking-widest text-primary backdrop-blur-sm">
+        <Sparkles className="h-1.5 w-1.5 animate-pulse" />
         <span>Featured</span>
       </div>
 
       {/* Media thumbnail */}
       <div className="relative aspect-square w-full overflow-hidden bg-black/30">
         {ad.mediaType === "video" ? (
-          <video
+          <StaticAdVideo
             src={ad.mediaUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
             onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center"
           />
@@ -401,7 +732,7 @@ function StaticProductCard({
             alt={ad.title}
             loading="lazy"
             onError={() => onMediaError(ad.id, ad.mediaUrl)}
-            className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.03]"
+            className="h-full w-full object-cover object-center transition-transform duration-300 group-hover/card:scale-[1.03]"
           />
         )}
       </div>

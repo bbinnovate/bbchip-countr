@@ -74,7 +74,7 @@ export function AdDrawer({
         const seed = Math.random().toString(36).substring(2, 10);
 
         const res = await fetch(
-          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&format=drawer&isStatic=false&seed=${encodeURIComponent(seed)}${excludeParam}`,
+          `/api/ads/serve?page=${encodeURIComponent(targetPage)}&format=drawer&type=popup&seed=${encodeURIComponent(seed)}${excludeParam}`,
           { cache: "no-store" },
         );
 
@@ -86,11 +86,12 @@ export function AdDrawer({
           Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
 
         // Safety filter in case server didn't exclude or client has updated session storage;
-        // Strictly filter out any static ads so only non-static drawer ads appear
+        // Strictly filter to only popup ads (or legacy non-static ads)
         const currentDismissed = new Set(getDismissedAdIds());
         const candidateAds = allFetched
           .filter((ad) => {
-            if (ad.isStatic) return false;
+            if (ad.adType && ad.adType !== "popup") return false;
+            if (!ad.adType && ad.isStatic) return false;
             if (currentDismissed.has(ad.id)) return false;
             // 1. Strict check: mediaUrl must not be empty or whitespace (if cleared in database, skip)
             if (!ad.mediaUrl || typeof ad.mediaUrl !== "string" || !ad.mediaUrl.trim())
@@ -349,7 +350,7 @@ export function AdDrawer({
         {/* Header: Sponsored badge & Close button */}
         <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/50 bg-secondary/30">
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[0.2em] text-primary uppercase">
+            <div className="flex items-center gap-1.5 text-[7px] tracking-[0.2em] text-primary uppercase">
               <Sparkles className="h-3 w-3 text-primary animate-pulse" />
               <span>Sponsored</span>
             </div>
