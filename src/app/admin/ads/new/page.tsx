@@ -288,8 +288,8 @@ export default function CreateAdPage() {
             Ads Type <span className="text-primary">*</span>
           </label>
           <p className="mb-3 text-xs text-muted-foreground">
-            Select the ad placement format. Banner & Product ads appear in page; Popup ads
-            appear in the bottom drawer.
+            Select the ad placement format. Banner & Product ads appear in page; Popup ads appear in
+            the bottom drawer.
           </p>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -381,8 +381,8 @@ export default function CreateAdPage() {
                 </span>
               </div>
               <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                Slide-up floating drawer in <strong className="text-foreground">Site</strong>{" "}
-                with backdrop and dismiss control.
+                Slide-up floating drawer in <strong className="text-foreground">Site</strong> with
+                backdrop and dismiss control.
               </p>
             </label>
           </div>
