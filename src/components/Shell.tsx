@@ -47,7 +47,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="flex-1 px-5">{children}</main>
-      <footer className="fixed inset-x-0 bottom-2 mx-auto w-full max-w-lg border-t border-border bg-background px-5 py-3 text-center text-xs text-muted-foreground">
+      <footer className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-lg border-t border-border bg-background px-5 py-3 text-center text-xs text-muted-foreground">
         made by{" "}
         <a
           href="https://bombayblokes.com/"
