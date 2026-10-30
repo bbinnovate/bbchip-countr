@@ -96,6 +96,57 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
   return clean;
 }
 
+const serverMediaStatusCache = new Map<string, { ok: boolean; timestamp: number }>();
+const SERVER_MEDIA_CACHE_TTL_MS = 60 * 1000;
+
+export async function isMediaUrlAccessibleServer(url?: string | null): Promise<boolean> {
+  if (!url || typeof url !== "string" || !url.trim()) return false;
+  const trimmed = url.trim();
+
+  const cached = serverMediaStatusCache.get(trimmed);
+  if (cached && Date.now() - cached.timestamp < SERVER_MEDIA_CACHE_TTL_MS) {
+    return cached.ok;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    let res = await fetch(trimmed, { method: "HEAD", signal: controller.signal });
+    clearTimeout(timeout);
+
+    // 404 or 410 indicates the media file was deleted or does not exist in storage
+    if (res.status === 404 || res.status === 410) {
+      serverMediaStatusCache.set(trimmed, { ok: false, timestamp: Date.now() });
+      return false;
+    }
+
+    let ok = res.ok;
+    if (!ok) {
+      // Fallback: try GET with Range bytes=0-0 in case HEAD is not supported by bucket
+      const getController = new AbortController();
+      const getTimeout = setTimeout(() => getController.abort(), 6000);
+      res = await fetch(trimmed, {
+        method: "GET",
+        headers: { Range: "bytes=0-0" },
+        signal: getController.signal,
+      });
+      clearTimeout(getTimeout);
+      if (res.status === 404 || res.status === 410) {
+        serverMediaStatusCache.set(trimmed, { ok: false, timestamp: Date.now() });
+        return false;
+      }
+      ok = res.ok || res.status === 206;
+    }
+
+    serverMediaStatusCache.set(trimmed, { ok, timestamp: Date.now() });
+    return ok;
+  } catch {
+    // On transient network error or timeout, do not permanently cache false.
+    // If the file is 404, the client <video> or <img> onError will catch it.
+    return true;
+  }
+}
+
 // -------------------------------------------------------------------------
 // Firestore Data Access via @/lib/firebase (No .json, No ADC needed)
 // -------------------------------------------------------------------------
@@ -382,6 +433,11 @@ export const adminDb = {
       if (!ad.targetPages.includes(targetPage)) return false;
       if (excludeIds.includes(ad.id)) return false;
 
+      // Strict mediaUrl check: if mediaUrl is missing or empty (e.g. manually emptied in database)
+      if (!ad.mediaUrl || typeof ad.mediaUrl !== "string" || !ad.mediaUrl.trim()) {
+        return false;
+      }
+
       // Filter by isStatic if specified
       if (typeof filters?.isStatic === "boolean") {
         const adIsStatic = Boolean(ad.isStatic);
@@ -410,6 +466,21 @@ export const adminDb = {
       return { ad: null, ads: [] };
     }
 
+    // Verify that media file exists and is accessible in storage (not deleted / 404)
+    const verifiedResults = await Promise.all(
+      eligible.map(async (ad) => {
+        const isAccessible = await isMediaUrlAccessibleServer(ad.mediaUrl);
+        return isAccessible ? ad : null;
+      }),
+    );
+    const verifiedEligible = verifiedResults.filter(
+      (ad): ad is NonNullable<typeof ad> => ad !== null,
+    );
+
+    if (verifiedEligible.length === 0) {
+      return { ad: null, ads: [] };
+    }
+
     // Deterministic selection/rotation strategy:
     let startIndex = 0;
     if (seed) {
@@ -418,17 +489,17 @@ export const adminDb = {
         hash = (hash << 5) - hash + seed.charCodeAt(i);
         hash |= 0;
       }
-      startIndex = Math.abs(hash) % eligible.length;
+      startIndex = Math.abs(hash) % verifiedEligible.length;
     } else {
       const hourBucket = Math.floor(now / (1000 * 60 * 60 * 6));
-      startIndex = hourBucket % eligible.length;
+      startIndex = hourBucket % verifiedEligible.length;
     }
 
     const selectedAds: PublicAd[] = [];
-    const countToTake = Math.min(eligible.length, maxCount);
+    const countToTake = Math.min(verifiedEligible.length, maxCount);
 
     for (let i = 0; i < countToTake; i++) {
-      const ad = eligible[(startIndex + i) % eligible.length];
+      const ad = verifiedEligible[(startIndex + i) % verifiedEligible.length];
       if (ad && !selectedAds.some((s) => s.id === ad.id)) {
         selectedAds.push({
           id: ad.id,

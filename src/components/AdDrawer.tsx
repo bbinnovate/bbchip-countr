@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import type { AllowedTargetPage, PublicAd } from "@/lib/firebase-admin";
+import { isMediaKnownBroken, markMediaUrlFailed, verifyMediaAccessible } from "@/lib/media-verify";
 
 interface AdDrawerProps {
   targetPage: AllowedTargetPage;
@@ -87,18 +88,40 @@ export function AdDrawer({
         // Safety filter in case server didn't exclude or client has updated session storage;
         // Strictly filter out any static ads so only non-static drawer ads appear
         const currentDismissed = new Set(getDismissedAdIds());
-        const eligibleAds = allFetched
-          .filter((ad) => !ad.isStatic && !currentDismissed.has(ad.id))
+        const candidateAds = allFetched
+          .filter((ad) => {
+            if (ad.isStatic) return false;
+            if (currentDismissed.has(ad.id)) return false;
+            // 1. Strict check: mediaUrl must not be empty or whitespace (if cleared in database, skip)
+            if (!ad.mediaUrl || typeof ad.mediaUrl !== "string" || !ad.mediaUrl.trim())
+              return false;
+            if (isMediaKnownBroken(ad.mediaUrl)) return false;
+            return true;
+          })
+          .slice(0, 5);
+
+        // 2. Strict media verification: verify media file exists in storage and is accessible
+        const checkResults = await Promise.all(
+          candidateAds.map(async (ad) => {
+            const ok = await verifyMediaAccessible(ad.mediaUrl, ad.mediaType);
+            return ok ? ad : null;
+          }),
+        );
+        const verifiedAds = checkResults
+          .filter((ad): ad is NonNullable<typeof ad> => ad !== null)
           .slice(0, 3);
 
-        if (isMounted && eligibleAds.length > 0) {
-          setAdsList(eligibleAds);
+        if (isMounted && verifiedAds.length > 0) {
+          setAdsList(verifiedAds);
           setCurrentIndex(0);
           setIsRendered(true);
           // Short delay so slide-up animation kicks in smoothly
           animTimerRef.current = setTimeout(() => {
             if (isMounted) setIsVisible(true);
           }, 200);
+        } else if (isMounted) {
+          setIsRendered(false);
+          setIsVisible(false);
         }
       } catch (err) {
         console.error("AdDrawer fetch error:", err);
@@ -196,6 +219,14 @@ export function AdDrawer({
     }
   };
 
+  const handleMediaError = (adId: string, mediaUrl?: string) => {
+    if (mediaUrl) {
+      markMediaUrlFailed(mediaUrl);
+    }
+    markAdDismissedThisSession(adId);
+    handleClose();
+  };
+
   const currentAd = adsList[currentIndex] || null;
   const trackedViewsRef = useRef<Set<string>>(new Set());
 
@@ -272,6 +303,7 @@ export function AdDrawer({
             autoPlay
             loop
             muted={isMuted}
+            onError={() => handleMediaError(currentAd.id, currentAd.mediaUrl)}
             className="w-full h-full object-cover"
           />
         </div>
@@ -296,6 +328,7 @@ export function AdDrawer({
           src={currentAd.mediaUrl}
           alt={currentAd.title}
           loading="lazy"
+          onError={() => handleMediaError(currentAd.id, currentAd.mediaUrl)}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
       </div>

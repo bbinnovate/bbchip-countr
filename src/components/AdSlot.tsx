@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ExternalLink, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PublicAd, StaticAdType } from "@/lib/firebase-admin";
+import { isMediaKnownBroken, markMediaUrlFailed, verifyMediaAccessible } from "@/lib/media-verify";
 
 type Props = {
   /** Which screen the slot sits on: "home" | "history" | "settle" */
@@ -47,6 +48,16 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
   // Initial state reads synchronously from memory cache if already visited in this session
   const [ads, setAds] = useState<PublicAd[]>(() => inMemoryAds.get(targetPage) ?? []);
   const [loaded, setLoaded] = useState<boolean>(() => inMemoryAds.has(targetPage));
+  const [failedAdIds, setFailedAdIds] = useState<Set<string>>(new Set());
+
+  const handleMediaError = useCallback((id: string, mediaUrl: string) => {
+    markMediaUrlFailed(mediaUrl);
+    setFailedAdIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -55,7 +66,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
     // (exact same real-time behavior as RECENT GAMES)
     const unsub = onSnapshot(
       collection(db, "ads"),
-      (snapshot) => {
+      async (snapshot) => {
         const now = Date.now();
         const candidateAds: (PublicAd & { createdAt?: string })[] = [];
 
@@ -67,6 +78,11 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
 
           if (!isActive || !isStatic) continue;
           if (!targetPages.includes(targetPage)) continue;
+
+          // 1. Strict check: mediaUrl must not be empty or whitespace (if cleared in database, skip)
+          const rawMediaUrl = typeof data.mediaUrl === "string" ? data.mediaUrl.trim() : "";
+          if (!rawMediaUrl) continue;
+          if (isMediaKnownBroken(rawMediaUrl)) continue;
 
           // Date scheduling checks
           if (data.startDate) {
@@ -83,7 +99,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
             title: String(data.title || ""),
             description: data.description ? String(data.description) : undefined,
             mediaType: data.mediaType === "video" ? "video" : "image",
-            mediaUrl: String(data.mediaUrl || ""),
+            mediaUrl: rawMediaUrl,
             mediaWidth: typeof data.mediaWidth === "number" ? data.mediaWidth : undefined,
             mediaHeight: typeof data.mediaHeight === "number" ? data.mediaHeight : undefined,
             aspectRatio: data.aspectRatio ? String(data.aspectRatio) : undefined,
@@ -104,7 +120,16 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
           return timeB - timeA;
         });
 
-        const finalAds: PublicAd[] = candidateAds.map(({ createdAt: _, ...ad }) => ad);
+        // 2. Strict media verification: verify media file exists in storage and is accessible
+        const checkResults = await Promise.all(
+          candidateAds.map(async (ad) => {
+            const ok = await verifyMediaAccessible(ad.mediaUrl, ad.mediaType);
+            return ok ? ad : null;
+          }),
+        );
+        const verifiedAds = checkResults.filter((ad): ad is NonNullable<typeof ad> => ad !== null);
+
+        const finalAds: PublicAd[] = verifiedAds.map(({ createdAt: _, ...ad }) => ad);
 
         // Update module-level cache for instant 0ms restoration on page transitions
         inMemoryAds.set(targetPage, finalAds);
@@ -121,13 +146,28 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
           { cache: "no-store" },
         )
           .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
+          .then(async (data) => {
             if (!data || !isMounted) return;
             const fetched: PublicAd[] =
               Array.isArray(data.ads) && data.ads.length > 0 ? data.ads : data.ad ? [data.ad] : [];
-            const valid = fetched.filter((a) => a.isStatic);
-            inMemoryAds.set(targetPage, valid);
-            setAds(valid);
+            const valid = fetched.filter(
+              (a) =>
+                a.isStatic &&
+                typeof a.mediaUrl === "string" &&
+                a.mediaUrl.trim().length > 0 &&
+                !isMediaKnownBroken(a.mediaUrl),
+            );
+
+            const checkResults = await Promise.all(
+              valid.map(async (ad) => {
+                const ok = await verifyMediaAccessible(ad.mediaUrl, ad.mediaType);
+                return ok ? ad : null;
+              }),
+            );
+            const verified = checkResults.filter((ad): ad is NonNullable<typeof ad> => ad !== null);
+
+            inMemoryAds.set(targetPage, verified);
+            setAds(verified);
             setLoaded(true);
           })
           .catch((err) => console.error("Fallback ads fetch failed:", err));
@@ -140,10 +180,12 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
     };
   }, [targetPage, count]);
 
-  // View (Impression) tracking for rendered static ads
+  const displayAds = ads.filter((ad) => !failedAdIds.has(ad.id));
+
+  // View (Impression) tracking for actually rendered static ads
   useEffect(() => {
-    if (ads.length > 0) {
-      for (const ad of ads) {
+    if (displayAds.length > 0) {
+      for (const ad of displayAds) {
         if (!trackedViewsGlobal.has(ad.id)) {
           trackedViewsGlobal.add(ad.id);
           try {
@@ -159,7 +201,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
         }
       }
     }
-  }, [ads]);
+  }, [displayAds]);
 
   // Click tracking
   const handleAdClick = (adId: string) => {
@@ -182,12 +224,12 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
   };
 
   // Only render when ads exist; if there are no static ads, render nothing
-  if (!loaded || ads.length === 0) {
+  if (!loaded || displayAds.length === 0) {
     return null;
   }
 
-  const bannerAds = ads.filter((ad) => !ad.staticType || ad.staticType === "banner");
-  const productAds = ads.filter((ad) => ad.staticType === "product_card");
+  const bannerAds = displayAds.filter((ad) => !ad.staticType || ad.staticType === "banner");
+  const productAds = displayAds.filter((ad) => ad.staticType === "product_card");
 
   let displayBanners = bannerAds;
   let displayProducts = productAds;
@@ -210,7 +252,12 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
       className={cn("mb-6 space-y-3", className)}
     >
       {displayBanners.map((ad) => (
-        <StaticBannerCard key={ad.id} ad={ad} onAdClick={handleAdClick} />
+        <StaticBannerCard
+          key={ad.id}
+          ad={ad}
+          onAdClick={handleAdClick}
+          onMediaError={handleMediaError}
+        />
       ))}
       {displayProducts.length > 0 && (
         <div
@@ -220,7 +267,12 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
           )}
         >
           {displayProducts.slice(0, count).map((ad) => (
-            <StaticProductCard key={ad.id} ad={ad} onAdClick={handleAdClick} />
+            <StaticProductCard
+              key={ad.id}
+              ad={ad}
+              onAdClick={handleAdClick}
+              onMediaError={handleMediaError}
+            />
           ))}
         </div>
       )}
@@ -228,7 +280,15 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
   );
 }
 
-function StaticBannerCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: string) => void }) {
+function StaticBannerCard({
+  ad,
+  onAdClick,
+  onMediaError,
+}: {
+  ad: PublicAd;
+  onAdClick: (id: string) => void;
+  onMediaError: (id: string, mediaUrl: string) => void;
+}) {
   // Static banner ad space: 3:1 aspect ratio (or 16:9 if specified), with media cropped to fit
   const aspectClass = ad.aspectRatio === "16:9" ? "aspect-video" : "aspect-[3/1]";
 
@@ -254,6 +314,7 @@ function StaticBannerCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: str
             loop
             muted
             playsInline
+            onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center"
           />
         ) : (
@@ -262,6 +323,7 @@ function StaticBannerCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: str
             src={ad.mediaUrl}
             alt={ad.title}
             loading="lazy"
+            onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.01]"
           />
         )}
@@ -303,7 +365,15 @@ function StaticBannerCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: str
   return content;
 }
 
-function StaticProductCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: string) => void }) {
+function StaticProductCard({
+  ad,
+  onAdClick,
+  onMediaError,
+}: {
+  ad: PublicAd;
+  onAdClick: (id: string) => void;
+  onMediaError: (id: string, mediaUrl: string) => void;
+}) {
   const cardContent = (
     <div className="group relative flex h-full flex-col overflow-hidden rounded-xl border border-primary/20 bg-card shadow-md transition hover:border-primary/40">
       {/* Top Sponsored tag */}
@@ -321,6 +391,7 @@ function StaticProductCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: st
             loop
             muted
             playsInline
+            onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center"
           />
         ) : (
@@ -329,6 +400,7 @@ function StaticProductCard({ ad, onAdClick }: { ad: PublicAd; onAdClick: (id: st
             src={ad.mediaUrl}
             alt={ad.title}
             loading="lazy"
+            onError={() => onMediaError(ad.id, ad.mediaUrl)}
             className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.03]"
           />
         )}
