@@ -1,5 +1,4 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
 import { getFirestore, type Timestamp } from "firebase-admin/firestore";
 import type { DailyCounts } from "./analytics-range";
 
@@ -56,24 +55,31 @@ export function summarizeUsage(
   };
 }
 
+const serviceAccount = () => JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY ?? "");
+
 function adminApp() {
-  return (
-    getApps()[0] ??
-    initializeApp({
-      credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY ?? "")),
-    })
-  );
+  return getApps()[0] ?? initializeApp({ credential: cert(serviceAccount()) });
 }
 
+// Calls the REST API directly because firebase-admin/auth crashes on Vercel when
+// it loads: its jwks-rsa dependency require()s jose, which is ESM-only.
 async function fetchAccountsCreated() {
-  const auth = getAuth(adminApp());
+  const projectId = serviceAccount().project_id;
+  const { access_token } = await adminApp().options.credential!.getAccessToken();
   const createdAt: number[] = [];
   let pageToken: string | undefined;
 
   do {
-    const page = await auth.listUsers(1000, pageToken);
-    page.users.forEach((user) => createdAt.push(Date.parse(user.metadata.creationTime)));
-    pageToken = page.pageToken;
+    const params = new URLSearchParams({ maxResults: "1000" });
+    if (pageToken) params.set("nextPageToken", pageToken);
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:batchGet?${params}`,
+      { headers: { Authorization: `Bearer ${access_token}` }, cache: "no-store" },
+    );
+    if (!res.ok) throw new Error(`Listing accounts failed with status ${res.status}`);
+    const page: { users?: { createdAt: string }[]; nextPageToken?: string } = await res.json();
+    page.users?.forEach((user) => createdAt.push(Number(user.createdAt)));
+    pageToken = page.nextPageToken;
   } while (pageToken);
 
   return createdAt;

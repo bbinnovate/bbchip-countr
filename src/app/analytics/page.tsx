@@ -143,7 +143,9 @@ export default function AnalyticsPage() {
         method: "POST",
         headers: { "x-analytics-key": key },
       });
-      const body = await res.json();
+      const body = await res
+        .json()
+        .catch(() => ({ error: "The server had a problem. Try again." }));
       if (res.status === 401) {
         storeKey(null);
         setAccessKey(null);
