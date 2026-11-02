@@ -5,12 +5,21 @@ import type { DailyCounts } from "./analytics-range";
 const TIME_ZONE = "Asia/Kolkata";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export interface Host {
+  name: string;
+  phone: string;
+  playerCode: string;
+  joinedDay: string; // YYYY-MM-DD in IST
+  games: number;
+}
+
 export interface UserAnalytics {
   asOf: string;
   today: string; // YYYY-MM-DD in IST
   totalUsers: number;
   totalGames: number;
   daily: DailyCounts[];
+  hosts: Host[];
 }
 
 const dayKey = (ms: number) => new Date(ms).toLocaleDateString("en-CA", { timeZone: TIME_ZONE });
@@ -24,12 +33,12 @@ function countByDay(times: number[]) {
   return perDay;
 }
 
-/** Turns timestamps into counts only, so no user ids ever leave the server. */
+/** Turns timestamps into counts. */
 export function summarizeUsage(
   accountsCreated: number[],
   gamesStarted: number[],
   now: number,
-): UserAnalytics {
+): Omit<UserAnalytics, "hosts"> {
   const newUsers = countByDay(accountsCreated);
   const games = countByDay(gamesStarted);
 
@@ -85,18 +94,46 @@ async function fetchAccountsCreated() {
   return createdAt;
 }
 
-async function fetchGamesStarted() {
-  const snap = await getFirestore(adminApp()).collection("sessions").select("startedAt").get();
+async function fetchGames() {
+  const snap = await getFirestore(adminApp())
+    .collection("sessions")
+    .select("startedAt", "hostUid")
+    .get();
   return snap.docs.flatMap((doc) => {
     const startedAt = doc.get("startedAt") as Timestamp | null | undefined;
-    return startedAt ? [startedAt.toMillis()] : [];
+    return startedAt
+      ? [{ startedAt: startedAt.toMillis(), hostUid: doc.get("hostUid") as string }]
+      : [];
   });
 }
 
+async function fetchHosts(games: { hostUid: string }[]): Promise<Host[]> {
+  const gamesByHost = new Map<string, number>();
+  games.forEach(({ hostUid }) => gamesByHost.set(hostUid, (gamesByHost.get(hostUid) ?? 0) + 1));
+
+  const snap = await getFirestore(adminApp()).collection("hostProfiles").get();
+  return snap.docs
+    .map((doc) => ({
+      createdAt: doc.createTime.toMillis(),
+      host: {
+        name: doc.get("name") as string,
+        phone: doc.get("phone") as string,
+        playerCode: doc.get("playerCode") as string,
+        joinedDay: dayKey(doc.createTime.toMillis()),
+        games: gamesByHost.get(doc.id) ?? 0,
+      },
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(({ host }) => host);
+}
+
 export async function fetchUserAnalytics(): Promise<UserAnalytics> {
-  const [accountsCreated, gamesStarted] = await Promise.all([
-    fetchAccountsCreated(),
-    fetchGamesStarted(),
-  ]);
-  return summarizeUsage(accountsCreated, gamesStarted, Date.now());
+  const [accountsCreated, games] = await Promise.all([fetchAccountsCreated(), fetchGames()]);
+  const hosts = await fetchHosts(games);
+  const usage = summarizeUsage(
+    accountsCreated,
+    games.map((game) => game.startedAt),
+    Date.now(),
+  );
+  return { ...usage, hosts };
 }

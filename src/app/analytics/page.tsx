@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { format } from "date-fns";
 import { CalendarDays, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
+import { HostsList } from "@/components/HostsList";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { Calendar } from "@/components/ui/calendar";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -373,6 +374,9 @@ export default function AnalyticsPage() {
             }))}
             tooltipLabel={(week) => `Week of ${dayLabel(week)}`}
           />
+
+          <SectionTitle>PEOPLE WITH DETAILS ({count(data.hosts.length)})</SectionTitle>
+          <HostsList hosts={data.hosts} />
 
           <p className="text-xs leading-relaxed text-muted-foreground">
             A new user is a new anonymous account, created the first time a browser opens any page.

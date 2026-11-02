@@ -72,6 +72,35 @@ service cloud.firestore {
       }
     }
 
+    // Needed by the ads admin on feature/ads-space-with-admin. Any signed-in
+    // visitor can read and write these, so move that admin to server-side
+    // access and remove them before ads launch.
+    match /admin/{userId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /ads/{adId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // The name, phone number and player code of whoever starts a game. Only
+    // the owner can read theirs, and these can never be listed.
+    match /hostProfiles/{uid} {
+      allow get: if isAuthenticated() && request.auth.uid == uid;
+
+      allow create, update: if isAuthenticated() &&
+        request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['name', 'phone', 'playerCode', 'updatedAt']) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 60 &&
+        request.resource.data.phone is string &&
+        request.resource.data.phone.matches('^[+][1-9][0-9]{7,14}$') &&
+        request.resource.data.playerCode is string &&
+        request.resource.data.playerCode.matches('^[A-Z2-9]{4}-[A-Z2-9]{4}$');
+    }
+
     // Default deny for everything else.
     match /{document=**} {
       allow read, write: if false;

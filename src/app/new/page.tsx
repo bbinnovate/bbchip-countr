@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
+import { HostDetailsModal } from "@/components/HostDetailsModal";
 import { Shell, SectionTitle } from "@/components/Shell";
+import { getHostProfile, linkPlayerCode } from "@/lib/host-profile";
 import { useAnonAuth } from "@/lib/use-anon-auth";
 import { usePlayerCode } from "@/lib/use-player-code";
 import { createSession, rememberCodeNames, subscribeCodeNames } from "@/lib/poker";
@@ -19,6 +21,7 @@ export default function NewSession() {
   const [names, setNames] = useState<string[]>(["", ""]);
   const [known, setKnown] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
+  const [askDetails, setAskDetails] = useState(false);
 
   useEffect(() => {
     if (!code) return;
@@ -29,7 +32,7 @@ export default function NewSession() {
 
   const addName = (v = "") => setNames((n) => (n.length >= 12 ? n : [...n, v]));
 
-  const valid = names.filter((n) => n.trim()).length >= 2 && bankValue > 0 && !!uid;
+  const valid = names.filter((n) => n.trim()).length >= 2 && bankValue > 0 && !!uid && !!code;
 
   const start = async () => {
     if (!uid) return;
@@ -43,6 +46,25 @@ export default function NewSession() {
       console.error("Failed to create session:", err);
       setCreating(false);
     }
+  };
+
+  // Details are mandatory, so a failed lookup asks again instead of skipping them.
+  const dealIn = async () => {
+    if (!uid || !code) return;
+    setCreating(true);
+    const profile = await getHostProfile(uid).catch(() => null);
+    if (!profile) {
+      setCreating(false);
+      setAskDetails(true);
+      return;
+    }
+    // The player code can change on this device. A failed update shouldn't stop the game.
+    if (profile.playerCode !== code) {
+      await linkPlayerCode(uid, code).catch((err) =>
+        console.error("Failed to link player code:", err),
+      );
+    }
+    await start();
   };
 
   return (
@@ -141,7 +163,7 @@ export default function NewSession() {
 
       <button
         disabled={!valid || creating}
-        onClick={start}
+        onClick={dealIn}
         className="btn-gold mt-8 w-full py-4 text-sm disabled:opacity-40"
       >
         {creating ? "Dealing..." : "Deal me in"}
@@ -149,6 +171,18 @@ export default function NewSession() {
       <p className="mt-2 text-center text-xs text-muted-foreground">
         Everyone starts with 1 buy-in.
       </p>
+
+      {askDetails && uid && code && (
+        <HostDetailsModal
+          uid={uid}
+          playerCode={code}
+          onClose={() => setAskDetails(false)}
+          onSaved={() => {
+            setAskDetails(false);
+            void start();
+          }}
+        />
+      )}
     </Shell>
   );
 }
