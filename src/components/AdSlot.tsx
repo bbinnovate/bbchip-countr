@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ChevronLeft, ChevronRight, ExternalLink, Sparkles } from "lucide-react";
@@ -276,7 +276,7 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
         />
       )}
       {displayProducts.length > 0 && (
-        <ProductCarousel
+        <ProductAdsSection
           ads={displayProducts}
           onAdClick={handleAdClick}
           onMediaError={handleMediaError}
@@ -419,18 +419,25 @@ function BannerCarousel({
 
   return (
     <div
-      className="relative w-full group"
+      className="group relative w-full"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onTouchStart={() => setIsPaused(true)}
       onTouchEnd={() => setIsPaused(false)}
     >
-      <StaticBannerCard
-        key={currentAd.id}
-        ad={currentAd}
-        onAdClick={onAdClick}
-        onMediaError={onMediaError}
-      />
+      {/* Horizontal Sliding Track */}
+      <div className="overflow-hidden rounded-xl">
+        <div
+          className="flex w-full transition-transform duration-500 ease-in-out"
+          style={{ transform: `translateX(-${currentIndex * 100}%)` }}
+        >
+          {ads.map((ad) => (
+            <div key={ad.id} className="w-full shrink-0">
+              <StaticBannerCard ad={ad} onAdClick={onAdClick} onMediaError={onMediaError} />
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Carousel Navigation Controls (when multiple ads exist) */}
       {ads.length > 1 && (
@@ -488,7 +495,67 @@ function BannerCarousel({
 }
 
 /**
- * Auto-rotating Carousel for Product Ads (5s timeout cycle, hover pause, controls, dots)
+ * Adaptive Product Ads Section
+ * - 1 ad: Centered single card
+ * - 2 ads: 1 row with 2 columns (both visible side by side)
+ * - 3+ ads: 2-column grid with auto-rotating carousel (2 cards per view)
+ */
+function ProductAdsSection({
+  ads,
+  onAdClick,
+  onMediaError,
+}: {
+  ads: PublicAd[];
+  onAdClick: (id: string) => void;
+  onMediaError: (id: string, mediaUrl: string) => void;
+}) {
+  if (ads.length === 0) return null;
+
+  // Case 1: Exactly 1 product ad -> Centered
+  if (ads.length === 1 && ads[0]) {
+    const singleAd = ads[0];
+    return (
+      <div className="w-full">
+        <div className="mx-auto max-w-xs">
+          <StaticProductCard ad={singleAd} onAdClick={onAdClick} onMediaError={onMediaError} />
+        </div>
+      </div>
+    );
+  }
+
+  // Case 2: Exactly 2 product ads -> 1 row 2-column grid showing both side by side
+  if (ads.length === 2 && ads[0] && ads[1]) {
+    const ad0 = ads[0];
+    const ad1 = ads[1];
+    return (
+      <div className="grid w-full grid-cols-2 gap-3">
+        <StaticProductCard
+          key={ad0.id}
+          ad={ad0}
+          onAdClick={onAdClick}
+          onMediaError={onMediaError}
+        />
+        <StaticProductCard
+          key={ad1.id}
+          ad={ad1}
+          onAdClick={onAdClick}
+          onMediaError={onMediaError}
+        />
+      </div>
+    );
+  }
+
+  // Case 3: 3 or more product ads -> 2-column grid with auto-rotating Carousel
+  return <ProductCarousel ads={ads} onAdClick={onAdClick} onMediaError={onMediaError} />;
+}
+
+/**
+ * Auto-rotating Carousel for Product Ads (3+ ads: 2-column grid, 5s timeout cycle, hover pause, controls, dots)
+ * Generates (N - 1) sequential pairs so ads don't repeat:
+ * For 3 ads:
+ * - Slide 0 (1/2): [Ad 1, Ad 2] (First and Second)
+ * - Slide 1 (2/2): [Ad 2, Ad 3] (Second and Third)
+ * - Then directly loops back to Slide 0 [Ad 1, Ad 2]!
  */
 function ProductCarousel({
   ads,
@@ -502,119 +569,134 @@ function ProductCarousel({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
+  // Generate non-repeating consecutive pairs:
+  // For 3 ads: [0, 1] then [1, 2] -> 2 slides total!
+  const slides = useMemo(() => {
+    const list: { first: PublicAd; second: PublicAd }[] = [];
+    for (let i = 0; i < ads.length - 1; i++) {
+      const first = ads[i];
+      const second = ads[i + 1];
+      if (first && second) {
+        list.push({ first, second });
+      }
+    }
+    return list;
+  }, [ads]);
+
   // Auto-advance every 5 seconds (5000ms)
   useEffect(() => {
-    if (ads.length <= 1 || isPaused) return;
+    if (slides.length <= 1 || isPaused) return;
 
     const interval = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % ads.length);
+      setCurrentIndex((prev) => (prev + 1) % slides.length);
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [ads.length, isPaused]);
+  }, [slides.length, isPaused]);
 
-  // Keep index within bounds if ads list changes
+  // Keep index within bounds if slides list changes
   useEffect(() => {
-    if (currentIndex >= ads.length) {
+    if (currentIndex >= slides.length) {
       setCurrentIndex(0);
     }
-  }, [ads.length, currentIndex]);
+  }, [slides.length, currentIndex]);
 
-  // Track impression for active carousel slide
+  const currentSlide = slides[currentIndex];
+
+  // Track impression for both currently visible ads in active slide
   useEffect(() => {
-    const activeAd = ads[currentIndex];
-    if (activeAd && !trackedViewsGlobal.has(activeAd.id)) {
-      trackedViewsGlobal.add(activeAd.id);
-      void fetch("/api/ads/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adId: activeAd.id, event: "view" }),
-        keepalive: true,
-      }).catch(() => {});
+    if (!currentSlide) return;
+    const visibleAds = [currentSlide.first, currentSlide.second];
+    for (const ad of visibleAds) {
+      if (ad && !trackedViewsGlobal.has(ad.id)) {
+        trackedViewsGlobal.add(ad.id);
+        void fetch("/api/ads/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ adId: ad.id, event: "view" }),
+          keepalive: true,
+        }).catch(() => {});
+      }
     }
-  }, [ads, currentIndex]);
+  }, [currentSlide]);
 
   const handlePrev = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setCurrentIndex((prev) => (prev - 1 + ads.length) % ads.length);
+    setCurrentIndex((prev) => (prev - 1 + slides.length) % slides.length);
   };
 
   const handleNext = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setCurrentIndex((prev) => (prev + 1) % ads.length);
+    setCurrentIndex((prev) => (prev + 1) % slides.length);
   };
 
-  const currentAd = ads[currentIndex];
-  if (!currentAd) return null;
+  if (slides.length === 0) return null;
 
   return (
     <div
-      className="relative max-w-xs mx-auto w-full group"
+      className="group relative w-full"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onTouchStart={() => setIsPaused(true)}
       onTouchEnd={() => setIsPaused(false)}
     >
-      <StaticProductCard
-        key={currentAd.id}
-        ad={currentAd}
-        onAdClick={onAdClick}
-        onMediaError={onMediaError}
-      />
+      {/* Sliding Track for Product Ads */}
+      <div className="overflow-hidden rounded-xl">
+        <div
+          className="flex w-full transition-transform duration-500 ease-in-out"
+          style={{ transform: `translateX(-${currentIndex * 100}%)` }}
+        >
+          {slides.map((slide, idx) => (
+            <div key={idx} className="w-full shrink-0">
+              <div className="grid w-full grid-cols-2 gap-3">
+                <div className="h-full">
+                  <StaticProductCard
+                    ad={slide.first}
+                    onAdClick={onAdClick}
+                    onMediaError={onMediaError}
+                  />
+                </div>
+                <div className="h-full">
+                  <StaticProductCard
+                    ad={slide.second}
+                    onAdClick={onAdClick}
+                    onMediaError={onMediaError}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      {/* Carousel Navigation Controls (when multiple product ads exist) */}
-      {ads.length > 1 && (
-        <>
-          {/* Subtle Slide Counter */}
-          <div className="absolute top-2 right-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-mono font-bold text-muted-foreground backdrop-blur-sm">
-            {currentIndex + 1} / {ads.length}
-          </div>
+      {/* Subtle Slide Counter */}
+      <div className="absolute top-2 right-2 z-10 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[9px] font-bold text-muted-foreground backdrop-blur-sm">
+        {currentIndex + 1} / {slides.length}
+      </div>
 
-          {/* Prev Button */}
+      {/* Indicators Bar with Dots */}
+      <div className="mt-2.5 flex items-center justify-center gap-1.5">
+        {slides.map((_, idx) => (
           <button
+            key={idx}
             type="button"
-            onClick={handlePrev}
-            aria-label="Previous product advertisement"
-            className="absolute left-2 top-1/3 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-
-          {/* Next Button */}
-          <button
-            type="button"
-            onClick={handleNext}
-            aria-label="Next product advertisement"
-            className="absolute right-2 top-1/3 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-sm transition hover:bg-black/90 hover:scale-105 shadow-md opacity-75 group-hover:opacity-100"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-
-          {/* Indicators Bar with Dots */}
-          <div className="mt-2 flex items-center justify-center gap-1.5">
-            {ads.map((ad, idx) => (
-              <button
-                key={ad.id}
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setCurrentIndex(idx);
-                }}
-                aria-label={`Go to product ${idx + 1}`}
-                className={cn(
-                  "h-1.5 rounded-full transition-all duration-300",
-                  idx === currentIndex
-                    ? "w-6 bg-primary"
-                    : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/60",
-                )}
-              />
-            ))}
-          </div>
-        </>
-      )}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setCurrentIndex(idx);
+            }}
+            aria-label={`Go to product slide ${idx + 1}`}
+            className={cn(
+              "h-1.5 rounded-full transition-all duration-300",
+              idx === currentIndex
+                ? "w-6 bg-primary"
+                : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/60",
+            )}
+          />
+        ))}
+      </div>
     </div>
   );
 }
