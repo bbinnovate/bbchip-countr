@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { format } from "date-fns";
 import { CalendarDays, RefreshCw } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { HostsList } from "@/components/HostsList";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { Calendar } from "@/components/ui/calendar";
@@ -86,40 +96,116 @@ function Comparison({
   );
 }
 
+type ChartBar = { day: string; count: number; partial: boolean };
+
+// An array, not a fragment: Recharts silently drops axes wrapped in a fragment.
+function chartAxes(tooltipLabel: (day: string) => string, xPadding = 0) {
+  return [
+    <CartesianGrid key="grid" vertical={false} />,
+    <XAxis
+      key="x"
+      dataKey="day"
+      tickFormatter={dayLabel}
+      tickLine={false}
+      axisLine={false}
+      minTickGap={24}
+      padding={{ left: xPadding, right: xPadding }}
+    />,
+    <YAxis key="y" allowDecimals={false} tickLine={false} axisLine={false} />,
+    <ChartTooltip
+      key="tooltip"
+      content={
+        <ChartTooltipContent
+          color="var(--color-count)"
+          labelFormatter={(day) => tooltipLabel(String(day))}
+        />
+      }
+    />,
+  ];
+}
+
 function CountChart({
   bars,
   label,
   tooltipLabel,
+  color = "var(--primary)",
+  labelPeak = false,
 }: {
-  bars: { day: string; count: number; partial: boolean }[];
+  bars: ChartBar[];
+  label: string;
+  tooltipLabel: (day: string) => string;
+  color?: string;
+  labelPeak?: boolean;
+}) {
+  const peak = Math.max(...bars.map((bar) => bar.count));
+  const labelled = bars.map((bar) => ({
+    ...bar,
+    peakLabel: labelPeak && peak > 0 && bar.count === peak ? count(bar.count) : undefined,
+  }));
+
+  return (
+    <div className="surface mb-6 p-4">
+      <ChartContainer config={{ count: { label, color } }} className="aspect-auto h-56 w-full">
+        <BarChart data={labelled} margin={{ left: -16, right: 4, top: labelPeak ? 20 : 8 }}>
+          {chartAxes(tooltipLabel)}
+          <Bar dataKey="count" fill="var(--color-count)" radius={4} maxBarSize={56}>
+            {bars.map((bar) => (
+              <Cell key={bar.day} fillOpacity={bar.partial ? 0.4 : 1} />
+            ))}
+            {labelPeak && (
+              <LabelList
+                dataKey="peakLabel"
+                position="top"
+                className="fill-foreground tabular font-bold"
+                fontSize={12}
+              />
+            )}
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+    </div>
+  );
+}
+
+function TrendChart({
+  bars,
+  label,
+  tooltipLabel,
+}: {
+  bars: ChartBar[];
   label: string;
   tooltipLabel: (day: string) => string;
 }) {
+  // A level line has an empty bounding box, which would leave a gradient stroke unpainted.
+  const level = bars.every((bar) => bar.count === bars[0]?.count);
+  const fadeFrom = bars.at(-1)?.partial && !level ? (bars.length - 2) / (bars.length - 1) : 1;
+
   return (
     <div className="surface mb-6 p-4">
       <ChartContainer
         config={{ count: { label, color: "var(--primary)" } }}
         className="aspect-auto h-56 w-full"
       >
-        <BarChart data={bars} margin={{ left: -16, right: 4, top: 8 }}>
-          <CartesianGrid vertical={false} />
-          <XAxis
-            dataKey="day"
-            tickFormatter={dayLabel}
-            tickLine={false}
-            axisLine={false}
-            minTickGap={24}
+        <AreaChart data={bars} margin={{ left: -16, right: 4, top: 8 }}>
+          <defs>
+            <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--color-count)" stopOpacity={0.3} />
+              <stop offset="100%" stopColor="var(--color-count)" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="trend-line" x1="0" y1="0" x2="1" y2="0">
+              <stop offset={fadeFrom} stopColor="var(--color-count)" />
+              <stop offset={fadeFrom} stopColor="var(--color-count)" stopOpacity={0.4} />
+            </linearGradient>
+          </defs>
+          {chartAxes(tooltipLabel, 16)}
+          <Area
+            dataKey="count"
+            type="monotone"
+            stroke={level ? "var(--color-count)" : "url(#trend-line)"}
+            strokeWidth={2}
+            fill="url(#trend-fill)"
           />
-          <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
-          <ChartTooltip
-            content={<ChartTooltipContent labelFormatter={(day) => tooltipLabel(String(day))} />}
-          />
-          <Bar dataKey="count" fill="var(--color-count)" radius={4}>
-            {bars.map((bar) => (
-              <Cell key={bar.day} fillOpacity={bar.partial ? 0.4 : 1} />
-            ))}
-          </Bar>
-        </BarChart>
+        </AreaChart>
       </ChartContainer>
     </div>
   );
@@ -208,49 +294,23 @@ export default function AnalyticsPage() {
   const firstGameDay = data && firstDayWith(data.daily, "games");
 
   return (
-    <Shell>
-      <div className="mb-5 flex items-center justify-between gap-3">
-        <h1 className="text-3xl font-extrabold">
+    <Shell wide>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-5">
+        <h1 className="flex-1 text-3xl font-extrabold">
           User <span className="gold-text">Analytics</span>
         </h1>
         {accessKey && (
           <button
             onClick={() => load(accessKey)}
             disabled={loading}
-            className="btn-ghost p-2 disabled:opacity-50"
+            className="btn-ghost p-2 disabled:opacity-50 lg:order-last"
             aria-label="Refresh"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         )}
-      </div>
-
-      {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
-
-      {!accessKey && (
-        <form onSubmit={submit} className="surface p-4">
-          <label htmlFor="analytics-key" className="mb-2 block text-sm font-bold">
-            Access key
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="analytics-key"
-              type="password"
-              autoComplete="off"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-secondary px-3 py-2.5 text-base font-bold"
-            />
-            <button type="submit" disabled={loading} className="btn-gold px-4 py-2.5 text-xs">
-              {loading ? "Checking" : "Open"}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {data && range && summary && firstDay && (
-        <>
-          <div className="mb-4 flex flex-wrap gap-2">
+        {data && range && firstDay && (
+          <div className="flex w-full flex-wrap gap-2 lg:w-96">
             <Select
               value={preset}
               onValueChange={(value) => {
@@ -302,8 +362,35 @@ export default function AnalyticsPage() {
               </PopoverContent>
             </Popover>
           </div>
+        )}
+      </div>
 
-          <div className="mb-6 grid grid-cols-2 gap-3">
+      {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
+
+      {!accessKey && (
+        <form onSubmit={submit} className="surface p-4 md:max-w-md">
+          <label htmlFor="analytics-key" className="mb-2 block text-sm font-bold">
+            Access key
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="analytics-key"
+              type="password"
+              autoComplete="off"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-border bg-secondary px-3 py-2.5 text-base font-bold"
+            />
+            <button type="submit" disabled={loading} className="btn-gold px-4 py-2.5 text-xs">
+              {loading ? "Checking" : "Open"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {data && range && summary && firstDay && (
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
               label="New users"
               value={summary.newUsers}
@@ -339,33 +426,41 @@ export default function AnalyticsPage() {
           </div>
 
           {summary.dayCount > 1 && (
-            <>
-              <SectionTitle>NEW USERS PER DAY, {rangeLabel(range).toUpperCase()}</SectionTitle>
-              <CountChart
-                label="New users"
-                bars={summary.days.map((d) => ({
-                  day: d.day,
-                  count: d.newUsers,
-                  partial: d.day === data.today,
-                }))}
-                tooltipLabel={dayLabel}
-              />
+            <div className="grid lg:grid-cols-2 lg:gap-x-6">
+              <div className="min-w-0">
+                <SectionTitle>NEW USERS PER DAY, {rangeLabel(range).toUpperCase()}</SectionTitle>
+                <TrendChart
+                  label="New users"
+                  bars={summary.days.map((d) => ({
+                    day: d.day,
+                    count: d.newUsers,
+                    partial: d.day === data.today,
+                  }))}
+                  tooltipLabel={dayLabel}
+                />
+              </div>
 
-              <SectionTitle>GAMES STARTED PER DAY, {rangeLabel(range).toUpperCase()}</SectionTitle>
-              <CountChart
-                label="Games started"
-                bars={summary.days.map((d) => ({
-                  day: d.day,
-                  count: d.games,
-                  partial: d.day === data.today,
-                }))}
-                tooltipLabel={dayLabel}
-              />
-            </>
+              <div className="min-w-0">
+                <SectionTitle>
+                  GAMES STARTED PER DAY, {rangeLabel(range).toUpperCase()}
+                </SectionTitle>
+                <CountChart
+                  color="var(--chart-games)"
+                  label="Games started"
+                  bars={summary.days.map((d) => ({
+                    day: d.day,
+                    count: d.games,
+                    partial: d.day === data.today,
+                  }))}
+                  tooltipLabel={dayLabel}
+                />
+              </div>
+            </div>
           )}
 
           <SectionTitle>NEW USERS PER WEEK</SectionTitle>
           <CountChart
+            labelPeak
             label="New users"
             bars={weeks.map((w) => ({
               day: w.weekStart,
@@ -378,13 +473,13 @@ export default function AnalyticsPage() {
           <SectionTitle>PEOPLE WITH DETAILS ({count(data.hosts.length)})</SectionTitle>
           <HostsList hosts={data.hosts} />
 
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">
             A new user is a new anonymous account, created the first time a browser opens any page.
             The same person on a second device or in a private window counts again, and so does
             anyone who only opened a shared table link. Accounts from before{" "}
             {firstUserDay ? dayLabel(firstUserDay) : "launch"} are no longer on record, so games go
-            back further than users. Days are in IST and weeks start on Monday. Faded bars are still
-            in progress, so comparisons that include today run low. Updated{" "}
+            back further than users. Days are in IST and weeks start on Monday. Faded bars and line
+            ends are still in progress, so comparisons that include today run low. Updated{" "}
             {new Date(data.asOf).toLocaleTimeString("en-IN", {
               timeZone: "Asia/Kolkata",
               hour: "numeric",

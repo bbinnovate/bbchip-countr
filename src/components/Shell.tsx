@@ -8,11 +8,12 @@ import { cn } from "@/lib/utils";
 import { usePlayerCode } from "@/lib/use-player-code";
 import { isValidPlayerCode, normalizePlayerCode } from "@/lib/player-code";
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
   const pathname = usePathname();
+  const width = cn("max-w-lg", wide && "md:max-w-3xl lg:max-w-6xl");
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-lg flex-col pb-16">
+    <div className={cn("mx-auto flex min-h-screen w-full flex-col pb-16", width)}>
       <header className="flex items-center justify-between px-5 pt-6 pb-4">
         <Link href="/" className="flex items-center gap-2">
           <span className="btn-gold flex h-9 w-9 items-center justify-center rounded-lg">
@@ -47,7 +48,12 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="flex-1 px-5">{children}</main>
-      <footer className="fixed inset-x-0 bottom-2 mx-auto w-full max-w-lg border-t border-border bg-background px-5 py-3 text-center text-xs text-muted-foreground">
+      <footer
+        className={cn(
+          "fixed inset-x-0 bottom-0 mx-auto w-full border-t border-border bg-background px-5 py-3 text-center text-xs text-muted-foreground",
+          width,
+        )}
+      >
         made by{" "}
         <a
           href="https://bombayblokes.com/"

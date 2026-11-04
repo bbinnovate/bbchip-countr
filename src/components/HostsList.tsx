@@ -32,12 +32,12 @@ export function HostsList({ hosts }: { hosts: Host[] }) {
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search name, number or player code"
         aria-label="Search people"
-        className="mb-3 w-full rounded-lg border border-border bg-secondary px-4 py-3 text-base font-semibold"
+        className="mb-3 w-full rounded-lg border border-border bg-secondary px-4 py-3 text-base font-semibold md:max-w-sm"
       />
       {shown.length === 0 ? (
         <div className="surface p-5 text-sm text-muted-foreground">No one matches that search.</div>
       ) : (
-        <div className="max-h-96 space-y-2 overflow-y-auto">
+        <div className="grid max-h-96 gap-2 overflow-y-auto md:grid-cols-2 lg:grid-cols-3">
           {shown.map((host) => (
             <div key={`${host.phone}-${host.playerCode}`} className="surface p-4">
               <div className="flex items-start justify-between gap-3">

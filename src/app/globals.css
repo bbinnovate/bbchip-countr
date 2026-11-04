@@ -54,6 +54,7 @@
   --destructive-foreground: oklch(0.98 0.01 90);
   --success: oklch(0.68 0.16 158); /* emerald */
   --success-foreground: oklch(0.17 0.004 285);
+  --chart-games: oklch(0.72 0.13 235); /* sky */
   --border: oklch(0.31 0.006 285);
   --input: oklch(0.31 0.006 285);
   --ring: oklch(0.86 0.17 92);
