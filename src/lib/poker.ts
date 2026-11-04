@@ -240,3 +240,25 @@ export function settle(session: Session): Transfer[] {
   }
   return transfers;
 }
+
+/** Plain-text results and settlement, using WhatsApp's *bold* markup. */
+export function resultsMessage(session: Session) {
+  const results = [...session.players]
+    .sort((a, b) => netOf(session, b) - netOf(session, a))
+    .map((p) => {
+      const net = netOf(session, p);
+      return `${p.name}: ${net > 0 ? "+" : ""}${formatMoney(net, session.currency)}`;
+    });
+  const transfers = settle(session).map(
+    (t) => `${t.from} → ${t.to}: ${formatMoney(t.amount, session.currency)}`,
+  );
+  return [
+    "*The Ledger*",
+    "",
+    "*Net results*",
+    ...results,
+    "",
+    "*Settle up*",
+    ...(transfers.length > 0 ? transfers : ["Nothing to settle."]),
+  ].join("\n");
+}

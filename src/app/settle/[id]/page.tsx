@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, Save } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Save, Share2 } from "lucide-react";
 import { Shell, SectionTitle } from "@/components/Shell";
 import { usePlayerCode } from "@/lib/use-player-code";
 import {
@@ -10,6 +10,7 @@ import {
   formatMoney,
   hasHistoryEntry,
   netOf,
+  resultsMessage,
   settle,
   subscribeSession,
   totalCashOut,
@@ -185,10 +186,26 @@ export default function SettleScreen() {
 
       {error && <p className="mt-4 text-center text-xs font-bold text-destructive">{error}</p>}
 
+      <a
+        href={
+          diff === 0
+            ? `https://wa.me/?text=${encodeURIComponent(resultsMessage(draft))}`
+            : undefined
+        }
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-disabled={diff !== 0}
+        className={`btn-ghost mt-4 flex w-full items-center justify-center gap-2 py-4 text-sm ${
+          diff === 0 ? "" : "opacity-60"
+        }`}
+      >
+        <Share2 className="h-4 w-4" /> Share on WhatsApp
+      </a>
+
       <button
         onClick={finish}
         disabled={saving}
-        className="btn-gold mt-4 mb-4 w-full py-4 text-sm disabled:opacity-60"
+        className="btn-gold mt-3 mb-4 w-full py-4 text-sm disabled:opacity-60"
       >
         <span className="inline-flex items-center gap-2">
           <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save to history"}
