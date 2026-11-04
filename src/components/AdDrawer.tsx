@@ -15,27 +15,101 @@ interface AdDrawerProps {
 }
 
 const DISMISSED_ADS_KEY = "ad_drawer_dismissed_ads";
+const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+interface DismissedAdsMap {
+  [adId: string]: number; // timestamp in ms when dismissed
+}
+
+function getStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    // Prefer localStorage so the 24-hour dismissal persists across page visits and tab closes
+    if (window.localStorage) return window.localStorage;
+  } catch {
+    // LocalStorage might be disabled or restricted
+  }
+  try {
+    if (window.sessionStorage) return window.sessionStorage;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getDismissedAdMap(): DismissedAdsMap {
+  const storage = getStorage();
+  if (!storage) return {};
+  try {
+    let raw = storage.getItem(DISMISSED_ADS_KEY);
+
+    // One-time migration: check legacy sessionStorage if localStorage doesn't have data yet
+    if (!raw && typeof window !== "undefined" && window.sessionStorage && storage !== window.sessionStorage) {
+      try {
+        raw = window.sessionStorage.getItem(DISMISSED_ADS_KEY);
+        if (raw) {
+          window.sessionStorage.removeItem(DISMISSED_ADS_KEY);
+        }
+      } catch {
+        // Ignore session storage errors
+      }
+    }
+
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    const result: DismissedAdsMap = {};
+
+    if (Array.isArray(parsed)) {
+      // Legacy format migration: array of string IDs -> set timestamp to now
+      for (const item of parsed) {
+        if (typeof item === "string" && item) {
+          result[item] = now;
+        } else if (item && typeof item === "object" && item.id) {
+          const ts = typeof item.timestamp === "number" ? item.timestamp : now;
+          if (now - ts < DISMISS_DURATION_MS) {
+            result[item.id] = ts;
+          }
+        }
+      }
+    } else if (parsed && typeof parsed === "object") {
+      for (const [id, ts] of Object.entries(parsed)) {
+        // Keep only entries that are within the 24h window
+        if (typeof ts === "number" && now - ts < DISMISS_DURATION_MS) {
+          result[id] = ts;
+        }
+      }
+    }
+
+    return result;
+  } catch {
+    return {};
+  }
+}
 
 function getDismissedAdIds(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.sessionStorage.getItem(DISMISSED_ADS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  const map = getDismissedAdMap();
+  const storage = getStorage();
+  if (storage) {
+    try {
+      // Re-save pruned map so expired entries (>24h) are completely removed from storage
+      storage.setItem(DISMISSED_ADS_KEY, JSON.stringify(map));
+    } catch {
+      // Ignore storage quota or security errors
+    }
   }
+  return Object.keys(map);
 }
 
 function markAdDismissedThisSession(adId: string): void {
   if (typeof window === "undefined" || !adId) return;
+  const storage = getStorage();
+  if (!storage) return;
   try {
-    const current = getDismissedAdIds();
-    if (!current.includes(adId)) {
-      current.push(adId);
-      window.sessionStorage.setItem(DISMISSED_ADS_KEY, JSON.stringify(current));
-    }
+    const map = getDismissedAdMap();
+    map[adId] = Date.now();
+    storage.setItem(DISMISSED_ADS_KEY, JSON.stringify(map));
   } catch {
     // Ignore storage quota or security errors
   }

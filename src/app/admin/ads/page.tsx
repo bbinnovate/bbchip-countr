@@ -45,9 +45,9 @@ export default function AdminAdsListPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  const fetchAds = async (targetPageNum = page) => {
+  const fetchAds = async (targetPageNum = page, silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const params = new URLSearchParams();
       if (search.trim()) params.set("search", search.trim());
       if (status !== "all") params.set("status", status);
@@ -66,20 +66,50 @@ export default function AdminAdsListPage() {
       setPage(data.page || 1);
       setTotalPages(data.totalPages || 1);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to load ads");
+      if (!silent) {
+        toast.error(err instanceof Error ? err.message : "Failed to load ads");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAds(1);
+    fetchAds(1, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, mediaType, targetPage, adTypeFilter]);
 
+  // Background auto-refresh every 8s for live views and clicks tracking
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        !deletingId &&
+        !isDeleting
+      ) {
+        fetchAds(page, true);
+      }
+    }, 8000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !deletingId && !isDeleting) {
+        fetchAds(page, true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, deletingId, isDeleting, status, mediaType, targetPage, adTypeFilter, search]);
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchAds(1);
+    fetchAds(1, false);
   };
 
   const handleToggleActive = async (ad: Ad) => {
@@ -156,13 +186,26 @@ export default function AdminAdsListPage() {
           </p>
         </div>
 
-        <Link
-          href="/admin/ads/new"
-          className="btn-gold flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-extrabold tracking-wider"
-        >
-          <Plus className="h-4 w-4" />
-          <span>NEW AD</span>
-        </Link>
+        <div className="flex items-center gap-2.5">
+          <div
+            className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400"
+            title="Ad metrics refresh live in real-time"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            <span>Live</span>
+          </div>
+
+          <Link
+            href="/admin/ads/new"
+            className="btn-gold flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-extrabold tracking-wider"
+          >
+            <Plus className="h-4 w-4" />
+            <span>NEW AD</span>
+          </Link>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}

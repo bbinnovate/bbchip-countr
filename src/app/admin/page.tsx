@@ -41,9 +41,9 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchStats = async () => {
+  const fetchStats = async (silent = false) => {
     try {
-      setError(null);
+      if (!silent) setError(null);
       const res = await fetch("/api/admin/ads/stats");
       if (!res.ok) {
         throw new Error("Failed to load statistics");
@@ -51,20 +51,44 @@ export default function AdminDashboardPage() {
       const data = await res.json();
       setStats(data.stats);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error fetching dashboard stats");
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Error fetching dashboard stats");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!silent) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchStats();
+    fetchStats(false);
+
+    // Auto-refresh stats every 5 seconds in the background when tab is active (Real-time updates)
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchStats(true);
+      }
+    }, 5000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchStats(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchStats();
+    fetchStats(false);
   };
 
   const pageLabels: Record<string, { name: string; path: string }> = {
@@ -87,6 +111,18 @@ export default function AdminDashboardPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Live Real-time Status Badge */}
+          <div
+            className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-400"
+            title="Dashboard refreshes live in real-time"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            <span>Live</span>
+          </div>
+
           <button
             onClick={handleRefresh}
             disabled={refreshing || loading}

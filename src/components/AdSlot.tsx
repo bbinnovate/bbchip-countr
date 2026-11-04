@@ -28,6 +28,70 @@ const PLACEMENT_PAGES: Record<Props["placement"], string> = {
 const inMemoryAds = new Map<string, PublicAd[]>();
 const trackedViewsGlobal = new Set<string>();
 
+const TRACKED_VIEWS_STORAGE_KEY = "ad_slot_tracked_views_24h";
+const VIEW_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+function getTrackedViewsMap(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(TRACKED_VIEWS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const now = Date.now();
+    const valid: Record<string, number> = {};
+    let pruned = false;
+    for (const [id, ts] of Object.entries(parsed)) {
+      if (typeof ts === "number" && now - ts < VIEW_EXPIRY_MS) {
+        valid[id] = ts;
+      } else {
+        pruned = true; // Expired entry (>24h), will be pruned
+      }
+    }
+    if (pruned) {
+      window.localStorage.setItem(TRACKED_VIEWS_STORAGE_KEY, JSON.stringify(valid));
+    }
+    return valid;
+  } catch {
+    return {};
+  }
+}
+
+function isAdViewTrackedRecently(adId: string): boolean {
+  if (trackedViewsGlobal.has(adId)) return true;
+  const map = getTrackedViewsMap();
+  if (map[adId]) {
+    trackedViewsGlobal.add(adId);
+    return true;
+  }
+  return false;
+}
+
+function recordAdView(adId: string): void {
+  if (typeof window === "undefined" || !adId) return;
+  if (isAdViewTrackedRecently(adId)) return;
+
+  trackedViewsGlobal.add(adId);
+  try {
+    const map = getTrackedViewsMap();
+    map[adId] = Date.now();
+    window.localStorage.setItem(TRACKED_VIEWS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore storage errors
+  }
+
+  try {
+    void fetch("/api/ads/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adId, event: "view" }),
+      keepalive: true,
+    });
+  } catch {
+    // Ignore tracking errors
+  }
+}
+
 // One-time cleanup for any stale sessionStorage cache from previous builds
 if (typeof window !== "undefined") {
   try {
@@ -194,26 +258,8 @@ export function AdSlot({ placement, type = "auto", count = 4, className }: Props
 
   const displayAds = ads.filter((ad) => !failedAdIds.has(ad.id));
 
-  // View (Impression) tracking for actually rendered static ads
-  useEffect(() => {
-    if (displayAds.length > 0) {
-      for (const ad of displayAds) {
-        if (!trackedViewsGlobal.has(ad.id)) {
-          trackedViewsGlobal.add(ad.id);
-          try {
-            void fetch("/api/ads/track", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ adId: ad.id, event: "view" }),
-              keepalive: true,
-            });
-          } catch {
-            // Ignore tracking errors
-          }
-        }
-      }
-    }
-  }, [displayAds]);
+  // View tracking is handled per-component via IntersectionObserver once the ad scrolls into the viewport
+  // and is capped at once per 24 hours per ad using recordAdView().
 
   // Click tracking
   const handleAdClick = (adId: string) => {
@@ -388,19 +434,36 @@ function BannerCarousel({
     }
   }, [ads.length, currentIndex]);
 
-  // Track impression for active carousel slide
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  const [isInViewport, setIsInViewport] = useState(false);
+
+  // Viewport observer: only count views when the carousel is actually visible on screen (scrolled into view)
   useEffect(() => {
+    const el = carouselRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          setIsInViewport(entry.isIntersecting && entry.intersectionRatio >= 0.25);
+        }
+      },
+      { threshold: [0, 0.25, 0.5] },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Track impression for active carousel slide ONLY when it's scrolled into the viewport
+  // and frequency-capped to once per 24 hours per ad
+  useEffect(() => {
+    if (!isInViewport) return;
     const activeAd = ads[currentIndex];
-    if (activeAd && !trackedViewsGlobal.has(activeAd.id)) {
-      trackedViewsGlobal.add(activeAd.id);
-      void fetch("/api/ads/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adId: activeAd.id, event: "view" }),
-        keepalive: true,
-      }).catch(() => {});
+    if (activeAd) {
+      recordAdView(activeAd.id);
     }
-  }, [ads, currentIndex]);
+  }, [ads, currentIndex, isInViewport]);
 
   const handlePrev = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -419,6 +482,7 @@ function BannerCarousel({
 
   return (
     <div
+      ref={carouselRef}
       className="group relative w-full"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
@@ -509,13 +573,45 @@ function ProductAdsSection({
   onAdClick: (id: string) => void;
   onMediaError: (id: string, mediaUrl: string) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isInViewport, setIsInViewport] = useState(false);
+
+  // Viewport observer for static product grid (1 or 2 ads)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          setIsInViewport(entry.isIntersecting && entry.intersectionRatio >= 0.25);
+        }
+      },
+      { threshold: [0, 0.25, 0.5] },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Track impression for 1 or 2 static ads ONLY when scrolled into the viewport
+  // and frequency-capped to once per 24 hours per ad
+  useEffect(() => {
+    if (!isInViewport || ads.length === 0 || ads.length > 2) return;
+    for (const ad of ads) {
+      if (ad) {
+        recordAdView(ad.id);
+      }
+    }
+  }, [ads, isInViewport]);
+
   if (ads.length === 0) return null;
 
   // Case 1: Exactly 1 product ad -> Centered
   if (ads.length === 1 && ads[0]) {
     const singleAd = ads[0];
     return (
-      <div className="w-full">
+      <div ref={containerRef} className="w-full">
         <div className="mx-auto max-w-xs">
           <StaticProductCard ad={singleAd} onAdClick={onAdClick} onMediaError={onMediaError} />
         </div>
@@ -528,7 +624,7 @@ function ProductAdsSection({
     const ad0 = ads[0];
     const ad1 = ads[1];
     return (
-      <div className="grid w-full grid-cols-2 gap-3">
+      <div ref={containerRef} className="grid w-full grid-cols-2 gap-3">
         <StaticProductCard
           key={ad0.id}
           ad={ad0}
@@ -568,6 +664,26 @@ function ProductCarousel({
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  const [isInViewport, setIsInViewport] = useState(false);
+
+  // Viewport observer: only count views when the carousel is actually visible on screen (scrolled into view)
+  useEffect(() => {
+    const el = carouselRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          setIsInViewport(entry.isIntersecting && entry.intersectionRatio >= 0.25);
+        }
+      },
+      { threshold: [0, 0.25, 0.5] },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // Generate non-repeating consecutive pairs:
   // For 3 ads: [0, 1] then [1, 2] -> 2 slides total!
@@ -603,22 +719,17 @@ function ProductCarousel({
 
   const currentSlide = slides[currentIndex];
 
-  // Track impression for both currently visible ads in active slide
+  // Track impression for both currently visible ads in active slide ONLY when in viewport
+  // and frequency-capped to once per 24 hours per ad
   useEffect(() => {
-    if (!currentSlide) return;
+    if (!isInViewport || !currentSlide) return;
     const visibleAds = [currentSlide.first, currentSlide.second];
     for (const ad of visibleAds) {
-      if (ad && !trackedViewsGlobal.has(ad.id)) {
-        trackedViewsGlobal.add(ad.id);
-        void fetch("/api/ads/track", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ adId: ad.id, event: "view" }),
-          keepalive: true,
-        }).catch(() => {});
+      if (ad) {
+        recordAdView(ad.id);
       }
     }
-  }, [currentSlide]);
+  }, [currentSlide, isInViewport]);
 
   const handlePrev = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -636,6 +747,7 @@ function ProductCarousel({
 
   return (
     <div
+      ref={carouselRef}
       className="group relative w-full"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
