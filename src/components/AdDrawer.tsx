@@ -44,7 +44,12 @@ function getDismissedAdMap(): DismissedAdsMap {
     let raw = storage.getItem(DISMISSED_ADS_KEY);
 
     // One-time migration: check legacy sessionStorage if localStorage doesn't have data yet
-    if (!raw && typeof window !== "undefined" && window.sessionStorage && storage !== window.sessionStorage) {
+    if (
+      !raw &&
+      typeof window !== "undefined" &&
+      window.sessionStorage &&
+      storage !== window.sessionStorage
+    ) {
       try {
         raw = window.sessionStorage.getItem(DISMISSED_ADS_KEY);
         if (raw) {
